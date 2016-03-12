@@ -24,12 +24,16 @@
 #include "FiniteStateMachine.h"
 #define APP_NAME "Thermostat"
 
-String VERSION = "Version 0.09";
+String VERSION = "Version 0.10";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
        * added minimum time to protect on-off on the fan and the heating element
           in function heatingUpdateFunction()
+ * changes in version 0.10:
+       * added temperatureDifference to fix DHT measurements with existing thermostat
+       * reduced END_OF_CYCLE_TIMEOUT to one sec since the HVAC controller
+          takes care of waiting of evacuating the heat/cold from the vents
 *******************************************************************************/
 
 /*******************************************************************************
@@ -50,7 +54,7 @@ elapsedMillis initTimer;
 
 //milliseconds to leave the fan on when the target temp has been reached
 //this evacuates the heat or the cold air from vents
-#define END_OF_CYCLE_TIMEOUT 15000
+#define END_OF_CYCLE_TIMEOUT 1000
 elapsedMillis endOfCycleTimer;
 
 //minimum number of milliseconds to leave the heating element on
@@ -93,7 +97,11 @@ elapsedMillis dhtSampleInterval;
 float targetTemp = 19.0;
 float currentTemp = 20.0;
 float currentHumidity = 0.0;
-float margin = 0.5;
+float margin = 0.3;
+//DHT difference with real temperature (if none set to zero)
+//use this variable to fix DHT measurements with your existing thermostat
+float temperatureDifference = -1.6;
+
 //temperature related variables - to be exposed in the cloud
 String targetTempString = String(targetTemp); //String to store the target temp so it can be exposed and set
 String currentTempString = String(currentTemp); //String to store the sensor's temp so it can be exposed
@@ -110,7 +118,7 @@ bool testing = false;
  *******************************************************************************/
 void setup() {
 
-  //pulish startup message with firmware version
+  //publish startup message with firmware version
   Particle.publish(APP_NAME, VERSION, 60, PRIVATE);
 
   //declare and init pins
@@ -233,8 +241,12 @@ int readTemperature() {
     return 0;
   }
 
+  //sample acquired, adjust DHT difference if any
+  float tmpTemperature = (float)DHT.getCelsius();
+  tmpTemperature = tmpTemperature + temperatureDifference;
+
   //sample acquired - go ahead and store temperature and humidity in internal variables
-  publishTemperature( (float)DHT.getCelsius(), (float)DHT.getHumidity() );
+  publishTemperature( tmpTemperature, (float)DHT.getHumidity() );
 
   //reset the sample flag so we can take another
   bDHTstarted = false;
@@ -265,8 +277,8 @@ int publishTemperature( float temperature, float humidity ) {
  currentHumidityString = String(currentHumidityChar);
 
  //publish readings
- Particle.publish(APP_NAME, "Current temperature: " + currentTempString, 60, PRIVATE);
- Particle.publish(APP_NAME, "Current humidity: " + currentHumidityString, 60, PRIVATE);
+ Particle.publish(APP_NAME, "Home temperature: " + currentTempString, 60, PRIVATE);
+ Particle.publish(APP_NAME, "Home humidity: " + currentHumidityString, 60, PRIVATE);
 
  return 0;
 
