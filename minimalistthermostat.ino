@@ -22,8 +22,8 @@
 #include "elapsedMillis.h"
 #include "PietteTech_DHT.h"
 #include "FiniteStateMachine.h"
-#define APP_NAME "Thermostat"
 
+#define APP_NAME "Thermostat"
 String VERSION = "Version 0.10";
 /*******************************************************************************
  * changes in version 0.09:
@@ -32,9 +32,14 @@ String VERSION = "Version 0.10";
           in function heatingUpdateFunction()
  * changes in version 0.10:
        * added temperatureDifference to fix DHT measurements with existing thermostat
-       * reduced END_OF_CYCLE_TIMEOUT to one sec since the HVAC controller
-          takes care of waiting of evacuating the heat/cold from the vents
+       * reduced END_OF_CYCLE_TIMEOUT to one sec since my HVAC controller
+          takes care of running the fan for a minute to evacuate the heat/cold
+          from the vents
+       * added pushbullet notifications for heating on/off
+       * added fan on/off setting via a cloud function
 *******************************************************************************/
+
+#define PUSHBULLET_NOTIF "pushbulletGUST"
 
 /*******************************************************************************
  initialize FSM states with proper enter, update and exit functions
@@ -49,7 +54,8 @@ FSM thermostatStateMachine = FSM(initState);
 
 //milliseconds for the init cycle, so temperature samples get stabilized
 //this should be in the order of the 5 minutes: 5*60*1000==300000
-#define INIT_TIMEOUT 30000
+//for now, I will use 1 minute
+#define INIT_TIMEOUT 60000
 elapsedMillis initTimer;
 
 //milliseconds to leave the fan on when the target temp has been reached
@@ -75,7 +81,7 @@ int fan = D0;
 int heat = D1;
 int cold = D2;
 //TESTING_HACK
-int fanTesting;
+int fanOutput;
 int heatTesting;
 int coldTesting;
 
@@ -106,6 +112,9 @@ float temperatureDifference = -1.6;
 String targetTempString = String(targetTemp); //String to store the target temp so it can be exposed and set
 String currentTempString = String(currentTemp); //String to store the sensor's temp so it can be exposed
 String currentHumidityString = String(currentHumidity); //String to store the sensor's humidity so it can be exposed
+
+//fan status: false=off, true=on
+bool fanStatus = false;
 
 //TESTING_HACK
 // this allows me to system test the project
@@ -145,15 +154,13 @@ void setup() {
   //declare cloud functions
   //https://docs.particle.io/reference/firmware/photon/#particle-function-
   //Currently the application supports the creation of up to 4 different cloud functions.
-  //The length of the funcKey is limited to a max of 12 characters.
   // If you declare a function name longer than 12 characters the function will not be registered.
   //user functions
   if (Particle.function("setTargetTmp", setTargetTemp)==false) {
      Particle.publish(APP_NAME, "ERROR: Failed to register function setTargetTemp", 60, PRIVATE);
   }
-  //TESTING_HACK
-  if (Particle.function("setTesting", setTesting)==false) {
-     Particle.publish(APP_NAME, "ERROR: Failed to register function setTesting", 60, PRIVATE);
+  if (Particle.function("setFan", setFan)==false) {
+     Particle.publish(APP_NAME, "ERROR: Failed to register function setFan", 60, PRIVATE);
   }
   //TESTING_HACK
   if (Particle.function("setCurrTmp", setCurrentTemp)==false) {
@@ -162,6 +169,10 @@ void setup() {
   //TESTING_HACK
   if (Particle.function("getOutputs", getOutputs)==false) {
      Particle.publish(APP_NAME, "ERROR: Failed to register function getOutputs", 60, PRIVATE);
+  }
+  //TESTING_HACK
+  if (Particle.function("setTesting", setTesting)==false) {
+     Particle.publish(APP_NAME, "ERROR: Failed to register function setTesting", 60, PRIVATE);
   }
 
 }
@@ -262,26 +273,25 @@ int readTemperature() {
  *******************************************************************************/
 int publishTemperature( float temperature, float humidity ) {
 
- char currentTempChar[32];
- currentTemp = temperature;
- int currentTempDecimals = (currentTemp - (int)currentTemp) * 100;
- sprintf(currentTempChar,"%0d.%d", (int)currentTemp, currentTempDecimals);
+  char currentTempChar[32];
+  currentTemp = temperature;
+  int currentTempDecimals = (currentTemp - (int)currentTemp) * 100;
+  sprintf(currentTempChar,"%0d.%d", (int)currentTemp, currentTempDecimals);
 
- char currentHumidityChar[32];
- currentHumidity = humidity;
- int currentHumidityDecimals = (currentHumidity - (int)currentHumidity) * 100;
- sprintf(currentHumidityChar,"%0d.%d", (int)currentHumidity, currentHumidityDecimals);
+  char currentHumidityChar[32];
+  currentHumidity = humidity;
+  int currentHumidityDecimals = (currentHumidity - (int)currentHumidity) * 100;
+  sprintf(currentHumidityChar,"%0d.%d", (int)currentHumidity, currentHumidityDecimals);
 
- //publish readings into exposed variables
- currentTempString = String(currentTempChar);
- currentHumidityString = String(currentHumidityChar);
+  //publish readings into exposed variables
+  currentTempString = String(currentTempChar);
+  currentHumidityString = String(currentHumidityChar);
 
- //publish readings
- Particle.publish(APP_NAME, "Home temperature: " + currentTempString, 60, PRIVATE);
- Particle.publish(APP_NAME, "Home humidity: " + currentHumidityString, 60, PRIVATE);
+  //publish readings
+  Particle.publish(APP_NAME, "Home temperature: " + currentTempString, 60, PRIVATE);
+  Particle.publish(APP_NAME, "Home humidity: " + currentHumidityString, 60, PRIVATE);
 
- return 0;
-
+  return 0;
 }
 
 
@@ -293,45 +303,59 @@ int publishTemperature( float temperature, float humidity ) {
 ********************************************************************************
 *******************************************************************************/
 void initEnterFunction(){
- Particle.publish(APP_NAME, "initEnterFunction", 60, PRIVATE);
- //start the timer of this cycle
- initTimer = 0;
-
+  Particle.publish(APP_NAME, "initEnterFunction", 60, PRIVATE);
+  //start the timer of this cycle
+  initTimer = 0;
 }
 void initUpdateFunction(){
- //time is up?
- if (initTimer > INIT_TIMEOUT) {
-  thermostatStateMachine.transitionTo(idleState);
- }
+  //time is up?
+  if (initTimer > INIT_TIMEOUT) {
+    thermostatStateMachine.transitionTo(idleState);
+  }
 }
 void initExitFunction(){
- Particle.publish(APP_NAME, "initExitFunction", 60, PRIVATE);
+  Particle.publish(APP_NAME, "initExitFunction", 60, PRIVATE);
 }
 
 void idleEnterFunction(){
- Particle.publish(APP_NAME, "idleEnterFunction", 60, PRIVATE);
- myDigitalWrite(fan, LOW);
- myDigitalWrite(heat, LOW);
- myDigitalWrite(cold, LOW);
+  Particle.publish(APP_NAME, "idleEnterFunction", 60, PRIVATE);
+  //turn off the fan only if fan was not set on manually with setFan(on)
+  if ( fanStatus == false ) {
+    myDigitalWrite(fan, LOW);
+  }
+  myDigitalWrite(heat, LOW);
+  myDigitalWrite(cold, LOW);
 }
 void idleUpdateFunction(){
- if ( currentTemp <= (targetTemp - margin) ) {
-  Particle.publish(APP_NAME, "Starting to heat", 60, PRIVATE);
-  thermostatStateMachine.transitionTo(heatingState);
- }
+  //set the fan output to the fanStatus ONLY in this state of the FSM
+  // since other states might need the fan on
+  //set it off only if it was on and fanStatus changed to false
+  if ( fanStatus == false and fanOutput == HIGH ) {
+    myDigitalWrite(fan, LOW);
+  }
+  //set it on only if it was off and fanStatus changed to true
+  if ( fanStatus == true and fanOutput == LOW ) {
+    myDigitalWrite(fan, HIGH);
+  }
+
+  if ( currentTemp <= (targetTemp - margin) ) {
+    Particle.publish(APP_NAME, "Starting to heat", 60, PRIVATE);
+    thermostatStateMachine.transitionTo(heatingState);
+  }
 }
 void idleExitFunction(){
- Particle.publish(APP_NAME, "idleExitFunction", 60, PRIVATE);
+  Particle.publish(APP_NAME, "idleExitFunction", 60, PRIVATE);
 }
 
 void heatingEnterFunction(){
- Particle.publish(APP_NAME, "heatingEnterFunction", 60, PRIVATE);
- myDigitalWrite(fan, HIGH);
- myDigitalWrite(heat, HIGH);
- myDigitalWrite(cold, LOW);
+  Particle.publish(APP_NAME, "heatingEnterFunction", 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF, "Heat on", 60, PRIVATE);
+  myDigitalWrite(fan, HIGH);
+  myDigitalWrite(heat, HIGH);
+  myDigitalWrite(cold, LOW);
 
- //start the minimum timer of this cycle
- minimumOnTimer = 0;
+  //start the minimum timer of this cycle
+  minimumOnTimer = 0;
 }
 void heatingUpdateFunction(){
   //is minimum time up?
@@ -346,30 +370,30 @@ void heatingUpdateFunction(){
   }
 }
 void heatingExitFunction(){
- Particle.publish(APP_NAME, "heatingExitFunction", 60, PRIVATE);
- myDigitalWrite(fan, HIGH);
- myDigitalWrite(heat, LOW);
- myDigitalWrite(cold, LOW);
+  Particle.publish(APP_NAME, "heatingExitFunction", 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF, "Heat off", 60, PRIVATE);
+  myDigitalWrite(fan, HIGH);
+  myDigitalWrite(heat, LOW);
+  myDigitalWrite(cold, LOW);
 }
 
 void endOfCycleEnterFunction(){
- Particle.publish(APP_NAME, "endOfCycleEnterFunction", 60, PRIVATE);
- myDigitalWrite(fan, HIGH);
- myDigitalWrite(heat, LOW);
- myDigitalWrite(cold, LOW);
+  Particle.publish(APP_NAME, "endOfCycleEnterFunction", 60, PRIVATE);
+  myDigitalWrite(fan, HIGH);
+  myDigitalWrite(heat, LOW);
+  myDigitalWrite(cold, LOW);
 
- //start the timer of this cycle
- endOfCycleTimer = 0;
-
+  //start the timer of this cycle
+  endOfCycleTimer = 0;
 }
 void endOfCycleUpdateFunction(){
- //time is up?
- if (endOfCycleTimer > END_OF_CYCLE_TIMEOUT) {
-  thermostatStateMachine.transitionTo(idleState);
- }
+  //time is up?
+  if (endOfCycleTimer > END_OF_CYCLE_TIMEOUT) {
+    thermostatStateMachine.transitionTo(idleState);
+  }
 }
 void endOfCycleExitFunction(){
- Particle.publish(APP_NAME, "endOfCycleExitFunction", 60, PRIVATE);
+  Particle.publish(APP_NAME, "endOfCycleExitFunction", 60, PRIVATE);
 }
 
 
@@ -405,7 +429,7 @@ int getOutputs(String dummy)
   // int fan = D0;
   // int heat = D1;
   // int cold = D2;
-  return coldTesting*4 + heatTesting*2 + fanTesting*1;
+  return coldTesting*4 + heatTesting*2 + fanOutput*1;
 }
 
 /*******************************************************************************
@@ -434,15 +458,16 @@ int setCurrentTemp(String newCurrentTemp)
 }
 
 /*******************************************************************************
- * Function Name  : getOutputs
- * Description    : returns the outputs so we can test the program
+ * Function Name  : myDigitalWrite
+ * Description    : writes to the pin and sets a variable to keep track
                     this is a hack that allows me to system test the project
- * Return         : returns the outputs
+                    and know what is the status of the outputs
+ * Return         : void
  *******************************************************************************/
-void myDigitalWrite( int input, int status){
+void myDigitalWrite(int input, int status){
   digitalWrite(input, status);
   if (input == fan){
-    fanTesting = status;
+    fanOutput = status;
   }
   if (input == heat){
     heatTesting = status;
@@ -450,4 +475,26 @@ void myDigitalWrite( int input, int status){
   if (input == cold){
     coldTesting = status;
   }
+}
+
+/*******************************************************************************
+ * Function Name  : setFan
+ * Description    : sets the status of the Fan on or off
+ * Return         : 0, or -1 if the parameter does not match on or off
+ *******************************************************************************/
+int setFan(String status)
+{
+  //update the fan status only in the case the status is on or off
+  if ( status == "on" ) {
+    fanStatus = true;
+    Particle.publish(PUSHBULLET_NOTIF, "Fan on", 60, PRIVATE);
+    return 0;
+  }
+  if ( status == "off" ) {
+    fanStatus = false;
+    Particle.publish(PUSHBULLET_NOTIF, "Fan off", 60, PRIVATE);
+    return 0;
+  }
+
+  return -1;
 }
