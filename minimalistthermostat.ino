@@ -24,7 +24,7 @@
 #include "FiniteStateMachine.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.10";
+String VERSION = "Version 0.11";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -37,6 +37,8 @@ String VERSION = "Version 0.10";
           from the vents
        * added pushbullet notifications for heating on/off
        * added fan on/off setting via a cloud function
+ * changes in version 0.11:
+      * added more pushbullet notifications and commented out publish() in other cases
 *******************************************************************************/
 
 #define PUSHBULLET_NOTIF "pushbulletGUST"
@@ -82,8 +84,8 @@ int heat = D1;
 int cold = D2;
 //TESTING_HACK
 int fanOutput;
-int heatTesting;
-int coldTesting;
+int heatOutput;
+int coldOutput;
 
 /*******************************************************************************
  DHT sensor
@@ -103,7 +105,7 @@ elapsedMillis dhtSampleInterval;
 float targetTemp = 19.0;
 float currentTemp = 20.0;
 float currentHumidity = 0.0;
-float margin = 0.3;
+float margin = 0.25;
 //DHT difference with real temperature (if none set to zero)
 //use this variable to fix DHT measurements with your existing thermostat
 float temperatureDifference = -1.6;
@@ -303,7 +305,7 @@ int publishTemperature( float temperature, float humidity ) {
 ********************************************************************************
 *******************************************************************************/
 void initEnterFunction(){
-  Particle.publish(APP_NAME, "initEnterFunction", 60, PRIVATE);
+  //Particle.publish(APP_NAME, "initEnterFunction", 60, PRIVATE);
   //start the timer of this cycle
   initTimer = 0;
 }
@@ -314,11 +316,11 @@ void initUpdateFunction(){
   }
 }
 void initExitFunction(){
-  Particle.publish(APP_NAME, "initExitFunction", 60, PRIVATE);
+  //Particle.publish(APP_NAME, "initExitFunction", 60, PRIVATE);
 }
 
 void idleEnterFunction(){
-  Particle.publish(APP_NAME, "idleEnterFunction", 60, PRIVATE);
+  //Particle.publish(APP_NAME, "idleEnterFunction", 60, PRIVATE);
   //turn off the fan only if fan was not set on manually with setFan(on)
   if ( fanStatus == false ) {
     myDigitalWrite(fan, LOW);
@@ -339,16 +341,16 @@ void idleUpdateFunction(){
   }
 
   if ( currentTemp <= (targetTemp - margin) ) {
-    Particle.publish(APP_NAME, "Starting to heat", 60, PRIVATE);
+    //Particle.publish(APP_NAME, "Starting to heat", 60, PRIVATE);
     thermostatStateMachine.transitionTo(heatingState);
   }
 }
 void idleExitFunction(){
-  Particle.publish(APP_NAME, "idleExitFunction", 60, PRIVATE);
+  //Particle.publish(APP_NAME, "idleExitFunction", 60, PRIVATE);
 }
 
 void heatingEnterFunction(){
-  Particle.publish(APP_NAME, "heatingEnterFunction", 60, PRIVATE);
+  //Particle.publish(APP_NAME, "heatingEnterFunction", 60, PRIVATE);
   Particle.publish(PUSHBULLET_NOTIF, "Heat on", 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, HIGH);
@@ -365,12 +367,13 @@ void heatingUpdateFunction(){
   }
 
   if ( currentTemp >= (targetTemp + margin) ) {
-    Particle.publish(APP_NAME, "Desired temperature reached", 60, PRIVATE);
+    //Particle.publish(APP_NAME, "Desired temperature reached", 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "Desired temperature reached", 60, PRIVATE);
     thermostatStateMachine.transitionTo(endOfCycleState);
   }
 }
 void heatingExitFunction(){
-  Particle.publish(APP_NAME, "heatingExitFunction", 60, PRIVATE);
+  //Particle.publish(APP_NAME, "heatingExitFunction", 60, PRIVATE);
   Particle.publish(PUSHBULLET_NOTIF, "Heat off", 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, LOW);
@@ -378,7 +381,7 @@ void heatingExitFunction(){
 }
 
 void endOfCycleEnterFunction(){
-  Particle.publish(APP_NAME, "endOfCycleEnterFunction", 60, PRIVATE);
+  //Particle.publish(APP_NAME, "endOfCycleEnterFunction", 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cold, LOW);
@@ -393,7 +396,7 @@ void endOfCycleUpdateFunction(){
   }
 }
 void endOfCycleExitFunction(){
-  Particle.publish(APP_NAME, "endOfCycleExitFunction", 60, PRIVATE);
+  //Particle.publish(APP_NAME, "endOfCycleExitFunction", 60, PRIVATE);
 }
 
 
@@ -429,7 +432,7 @@ int getOutputs(String dummy)
   // int fan = D0;
   // int heat = D1;
   // int cold = D2;
-  return coldTesting*4 + heatTesting*2 + fanOutput*1;
+  return coldOutput*4 + heatOutput*2 + fanOutput*1;
 }
 
 /*******************************************************************************
@@ -449,10 +452,12 @@ int setCurrentTemp(String newCurrentTemp)
   if ( tmpFloat > 0 ) {
     currentTemp = tmpFloat;
     currentTempString = String(currentTemp);
-    Particle.publish(APP_NAME, "New current temp: " + currentTempString, 60, PRIVATE);
+    //Particle.publish(APP_NAME, "New current temp: " + currentTempString, 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "New current temp: " + currentTempString, 60, PRIVATE);
     return 0;
   } else {
-    Particle.publish(APP_NAME, "ERROR: Failed to set new current temp to " + newCurrentTemp, 60, PRIVATE);
+    //Particle.publish(APP_NAME, "ERROR: Failed to set new current temp to " + newCurrentTemp, 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new current temp to " + newCurrentTemp, 60, PRIVATE);
     return -1;
   }
 }
@@ -470,10 +475,10 @@ void myDigitalWrite(int input, int status){
     fanOutput = status;
   }
   if (input == heat){
-    heatTesting = status;
+    heatOutput = status;
   }
   if (input == cold){
-    coldTesting = status;
+    coldOutput = status;
   }
 }
 
