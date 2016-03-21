@@ -23,9 +23,10 @@
 #include "PietteTech_DHT.h"
 #include "FiniteStateMachine.h"
 #include "blynk.h"
+#include "blynkAuthToken.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.12";
+String VERSION = "Version 0.13";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -44,6 +45,9 @@ String VERSION = "Version 0.12";
            * added blynk support
            * added minimumIdleTimer, to protect fan and heating/cooling elements
               from glitches
+ * changes in version 0.13:
+           * removing endOfCycleState since my HVAC does not need it
+           * adding time in notifications
 *******************************************************************************/
 
 #define PUSHBULLET_NOTIF "pushbulletGUST"
@@ -54,7 +58,6 @@ String VERSION = "Version 0.12";
 State initState = State( initEnterFunction, initUpdateFunction, initExitFunction );
 State idleState = State( idleEnterFunction, idleUpdateFunction, idleExitFunction );
 State heatingState = State( heatingEnterFunction, heatingUpdateFunction, heatingExitFunction );
-State endOfCycleState = State( endOfCycleEnterFunction, endOfCycleUpdateFunction, endOfCycleExitFunction );
 
 //initialize state machine, start in state: Idle
 FSM thermostatStateMachine = FSM(initState);
@@ -65,14 +68,8 @@ FSM thermostatStateMachine = FSM(initState);
 #define INIT_TIMEOUT 60000
 elapsedMillis initTimer;
 
-//milliseconds to leave the fan on when the target temp has been reached
-//this evacuates the heat or the cold air from vents
-// MY HVAC DOES THIS AUTOMATICALLY - so I have no need for this cycle
-#define END_OF_CYCLE_TIMEOUT 0
-elapsedMillis endOfCycleTimer;
-
 //minimum number of milliseconds to leave the heating element on
-// to protect on-off on the fan and the heating element
+// to protect on-off on the fan and the heating/cooling elements
 #define MINIMUM_ON_TIMEOUT 180000
 elapsedMillis minimumOnTimer;
 
@@ -80,6 +77,8 @@ elapsedMillis minimumOnTimer;
 // to protect the fan and the heating/cooling elements
 #define MINIMUM_IDLE_TIMEOUT 180000
 elapsedMillis minimumIdleTimer;
+
+const int TIME_ZONE = -4;
 
 /*******************************************************************************
  IO mapping
@@ -116,7 +115,13 @@ elapsedMillis dhtSampleInterval;
 float targetTemp = 19.0;
 float currentTemp = 20.0;
 float currentHumidity = 0.0;
+
+//you can change this to your liking
+// a smaller value will make your temperature more constant at the price of
+//  starting the heat more times
+// a larger value will reduce the number the HVAC comes on but will leave it on a longer time
 float margin = 0.25;
+
 //DHT difference with real temperature (if none set to zero)
 //use this variable to fix DHT measurements with your existing thermostat
 float temperatureDifference = -1.6;
@@ -135,12 +140,16 @@ bool testing = false;
 
 /*******************************************************************************
  Here you decide if you want to use Blynk or not
+ Your blynk token goes in another file to avoid sharing it by mistake
+  (like I just did in my last commit)
+ The file containing your token has to be named blynkAuthToken.h and it should contain
+ something like this:
+  #define BLYNK_AUTH_TOKEN "1234567890123456789012345678901234567890"
+ replace with your project auth token (the blynk app will give you one)
 *******************************************************************************/
 #define USE_BLYNK "yes"
-/*******************************************************************************
- Your blynk token goes here - DANGER - DO NOT SHARE!!!!
-*******************************************************************************/
-char auth[] = "40ac7bdb791d4268a8f64beab4706997";
+char auth[] = BLYNK_AUTH_TOKEN;
+
 
 /*******************************************************************************
  * Function Name  : setup
@@ -201,6 +210,7 @@ void setup() {
     Blynk.begin(auth);
   }
 
+  Time.zone(TIME_ZONE);
 }
 
 // This wrapper is in charge of calling the DHT sensor lib
@@ -243,11 +253,11 @@ int setTargetTemp(String newTargetTemp)
     targetTemp = tmpFloat;
     targetTempString = String(targetTemp);
     //Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "New target temp: " + targetTempString, 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "New target temp: " + targetTempString + getTime(), 60, PRIVATE);
     return 0;
   } else {
     //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + newTargetTemp, 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new target temp to " + newTargetTemp, 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new target temp to " + newTargetTemp + getTime(), 60, PRIVATE);
     return -1;
   }
 }
@@ -417,36 +427,16 @@ void heatingUpdateFunction(){
   if ( currentTemp >= (targetTemp + margin) ) {
     //Particle.publish(APP_NAME, "Desired temperature reached", 60, PRIVATE);
     Particle.publish(PUSHBULLET_NOTIF, "Desired temperature reached", 60, PRIVATE);
-    thermostatStateMachine.transitionTo(endOfCycleState);
+    thermostatStateMachine.transitionTo(idleState);
   }
 }
 void heatingExitFunction(){
   //Particle.publish(APP_NAME, "heatingExitFunction", 60, PRIVATE);
   Particle.publish(PUSHBULLET_NOTIF, "Heat off", 60, PRIVATE);
-  myDigitalWrite(fan, HIGH);
+  myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cold, LOW);
 }
-
-void endOfCycleEnterFunction(){
-  //Particle.publish(APP_NAME, "endOfCycleEnterFunction", 60, PRIVATE);
-  myDigitalWrite(fan, HIGH);
-  myDigitalWrite(heat, LOW);
-  myDigitalWrite(cold, LOW);
-
-  //start the timer of this cycle
-  endOfCycleTimer = 0;
-}
-void endOfCycleUpdateFunction(){
-  //time is up?
-  if (endOfCycleTimer > END_OF_CYCLE_TIMEOUT) {
-    thermostatStateMachine.transitionTo(idleState);
-  }
-}
-void endOfCycleExitFunction(){
-  //Particle.publish(APP_NAME, "endOfCycleExitFunction", 60, PRIVATE);
-}
-
 
 /*******************************************************************************
 ********************************************************************************
@@ -501,11 +491,11 @@ int setCurrentTemp(String newCurrentTemp)
     currentTemp = tmpFloat;
     currentTempString = String(currentTemp);
     //Particle.publish(APP_NAME, "New current temp: " + currentTempString, 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "New current temp: " + currentTempString, 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "New current temp: " + currentTempString + getTime(), 60, PRIVATE);
     return 0;
   } else {
     //Particle.publish(APP_NAME, "ERROR: Failed to set new current temp to " + newCurrentTemp, 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new current temp to " + newCurrentTemp, 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new current temp to " + newCurrentTemp + getTime(), 60, PRIVATE);
     return -1;
   }
 }
@@ -540,12 +530,12 @@ int setFan(String status)
   //update the fan status only in the case the status is on or off
   if ( status == "on" ) {
     fanStatus = true;
-    Particle.publish(PUSHBULLET_NOTIF, "Fan on", 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "Fan on" + getTime(), 60, PRIVATE);
     return 0;
   }
   if ( status == "off" ) {
     fanStatus = false;
-    Particle.publish(PUSHBULLET_NOTIF, "Fan off", 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "Fan off" + getTime(), 60, PRIVATE);
     return 0;
   }
 
@@ -569,4 +559,8 @@ BLYNK_READ(V1)
 BLYNK_WRITE(V10)
 {
   setTargetTemp(param.asStr());
+}
+
+String getTime() {
+ return " @" + Time.format(time, TIME_FORMAT_ISO8601_FULL);
 }
