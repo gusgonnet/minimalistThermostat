@@ -26,7 +26,7 @@
 #include "blynkAuthToken.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.13";
+String VERSION = "Version 0.14";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -48,9 +48,16 @@ String VERSION = "Version 0.13";
  * changes in version 0.13:
            * removing endOfCycleState since my HVAC does not need it
            * adding time in notifications
+ * changes in version 0.14:
+           * debouncing target temp and fan status
+
+TODO list:
+ * take few samples and average them
+
 *******************************************************************************/
 
 #define PUSHBULLET_NOTIF "pushbulletGUST"
+const int TIME_ZONE = -4;
 
 /*******************************************************************************
  initialize FSM states with proper enter, update and exit functions
@@ -77,8 +84,6 @@ elapsedMillis minimumOnTimer;
 // to protect the fan and the heating/cooling elements
 #define MINIMUM_IDLE_TIMEOUT 180000
 elapsedMillis minimumIdleTimer;
-
-const int TIME_ZONE = -4;
 
 /*******************************************************************************
  IO mapping
@@ -133,6 +138,12 @@ String currentHumidityString = String(currentHumidity); //String to store the se
 
 //fan status: false=off, true=on
 bool fanStatus = false;
+
+#define DEBOUNCE_SETTINGS 5000
+float newTargetTemp = 19.0;
+elapsedMillis setNewTargetTempTimer;
+bool newFanStatus = false;
+elapsedMillis setNewFanStatusTimer;
 
 //TESTING_HACK
 // this allows me to system test the project
@@ -189,7 +200,7 @@ void setup() {
   if (Particle.function("setTargetTmp", setTargetTemp)==false) {
      Particle.publish(APP_NAME, "ERROR: Failed to register function setTargetTemp", 60, PRIVATE);
   }
-  if (Particle.function("setFan", setFan)==false) {
+  if (Particle.function("setFan", setFanStatus)==false) {
      Particle.publish(APP_NAME, "ERROR: Failed to register function setFan", 60, PRIVATE);
   }
   //TESTING_HACK
@@ -235,6 +246,9 @@ void loop() {
     Blynk.run();
   }
 
+  updateTargetTemp();
+  updateFanStatus();
+
 }
 
 /*******************************************************************************
@@ -243,24 +257,108 @@ void loop() {
                     newTargetTemp has to be a valid float value, or no new target temp will be set
  * Return         : 0, or -1 if it fails to convert the temp to float
  *******************************************************************************/
-int setTargetTemp(String newTargetTemp)
+int setTargetTemp(String temp)
 {
-  float tmpFloat = newTargetTemp.toFloat();
+  float tmpFloat = temp.toFloat();
   //update the target temp only in the case the conversion to float works
   // (toFloat returns 0 if there is a problem in the conversion)
   // sorry, if you wanted to set 0 as the target temp, you can't :)
   if ( tmpFloat > 0 ) {
-    targetTemp = tmpFloat;
-    targetTempString = String(targetTemp);
-    //Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "New target temp: " + targetTempString + getTime(), 60, PRIVATE);
+    //newTargetTemp will be copied to targetTemp moments after in function updateTargetTemp()
+    // this is to 1-debounce blynk and 2-debounce the user changing his/her mind quickly
+    newTargetTemp = tmpFloat;
+    //start timer to debounce this new setting
+    setNewTargetTempTimer = 0;
     return 0;
-  } else {
-    //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + newTargetTemp, 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new target temp to " + newTargetTemp + getTime(), 60, PRIVATE);
-    return -1;
   }
+
+  //if the execution reaches here then the value was invalid
+  //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
+  return -1;
 }
+
+/*******************************************************************************
+ * Function Name  : updateTargetTemp
+ * Description    : updates the value of target temperature of the thermostat
+                    moments after it was set with setTargetTemp
+ * Return         : none
+ *******************************************************************************/
+void updateTargetTemp()
+{
+  //debounce the new setting
+  if (setNewTargetTempTimer < DEBOUNCE_SETTINGS) {
+    return;
+  }
+  //is there anything to update?
+  if (targetTemp == newTargetTemp) {
+    return;
+  }
+
+  targetTemp = newTargetTemp;
+  targetTempString = String(targetTemp);
+  //Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF, "New target temp: " + targetTempString + getTime(), 60, PRIVATE);
+}
+
+/*******************************************************************************
+ * Function Name  : setFanStatus
+ * Description    : sets the status of the Fan on or off
+ * Return         : 0, or -1 if the parameter does not match on or off
+ *******************************************************************************/
+int setFanStatus(String status)
+{
+  //update the fan status only in the case the status is on or off
+  if ( status == "on" ) {
+    //newFanStatus will be copied to fanStatus moments after in function updateTargetTemp()
+    // this is to 1-debounce blynk and 2-debounce the user changing his/her mind quickly
+    newFanStatus = true;
+    //start timer to debounce this new setting
+    setNewFanStatusTimer = 0;
+    return 0;
+  }
+  if ( status == "off" ) {
+    //newFanStatus will be copied to fanStatus moments after in function updateTargetTemp()
+    // this is to 1-debounce blynk and 2-debounce the user changing his/her mind quickly
+    newFanStatus = false;
+    //start timer to debounce this new setting
+    setNewFanStatusTimer = 0;
+    return 0;
+  }
+
+  return -1;
+}
+
+/*******************************************************************************
+ * Function Name  : updateFanStatus
+ * Description    : updates the status of the fan of the thermostat
+                    moments after it was set with setFan
+ * Return         : none
+ *******************************************************************************/
+void updateFanStatus()
+{
+  //debounce the new setting
+  if (setNewFanStatusTimer < DEBOUNCE_SETTINGS) {
+    return;
+  }
+  //is there anything to update?
+  if (fanStatus == newFanStatus) {
+    return;
+  }
+
+  //update the fan status only in the case the status is on or off
+  if (newFanStatus) {
+    fanStatus = true;
+    Particle.publish(PUSHBULLET_NOTIF, "Fan on" + getTime(), 60, PRIVATE);
+    return;
+  } else {
+    fanStatus = false;
+    Particle.publish(PUSHBULLET_NOTIF, "Fan off" + getTime(), 60, PRIVATE);
+    return;
+  }
+
+}
+
 
 /*******************************************************************************
  * Function Name  : readTemperature
@@ -409,7 +507,7 @@ void idleExitFunction(){
 
 void heatingEnterFunction(){
   //Particle.publish(APP_NAME, "heatingEnterFunction", 60, PRIVATE);
-  Particle.publish(PUSHBULLET_NOTIF, "Heat on", 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF, "Heat on" + getTime(), 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, HIGH);
   myDigitalWrite(cold, LOW);
@@ -426,13 +524,13 @@ void heatingUpdateFunction(){
 
   if ( currentTemp >= (targetTemp + margin) ) {
     //Particle.publish(APP_NAME, "Desired temperature reached", 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "Desired temperature reached", 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "Desired temperature reached" + getTime(), 60, PRIVATE);
     thermostatStateMachine.transitionTo(idleState);
   }
 }
 void heatingExitFunction(){
   //Particle.publish(APP_NAME, "heatingExitFunction", 60, PRIVATE);
-  Particle.publish(PUSHBULLET_NOTIF, "Heat off", 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF, "Heat off" + getTime(), 60, PRIVATE);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cold, LOW);
@@ -518,28 +616,6 @@ void myDigitalWrite(int input, int status){
   if (input == cold){
     coldOutput = status;
   }
-}
-
-/*******************************************************************************
- * Function Name  : setFan
- * Description    : sets the status of the Fan on or off
- * Return         : 0, or -1 if the parameter does not match on or off
- *******************************************************************************/
-int setFan(String status)
-{
-  //update the fan status only in the case the status is on or off
-  if ( status == "on" ) {
-    fanStatus = true;
-    Particle.publish(PUSHBULLET_NOTIF, "Fan on" + getTime(), 60, PRIVATE);
-    return 0;
-  }
-  if ( status == "off" ) {
-    fanStatus = false;
-    Particle.publish(PUSHBULLET_NOTIF, "Fan off" + getTime(), 60, PRIVATE);
-    return 0;
-  }
-
-  return -1;
 }
 
 /*******************************************************************************/
