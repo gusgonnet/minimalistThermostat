@@ -26,7 +26,7 @@
 #include "blynkAuthToken.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.14";
+String VERSION = "Version 0.15";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -50,9 +50,8 @@ String VERSION = "Version 0.14";
            * adding time in notifications
  * changes in version 0.14:
            * debouncing target temp and fan status
-
-TODO list:
- * take few samples and average them
+ * changes in version 0.15:
+           * taking few samples and averaging the temperature to improve stability
 
 *******************************************************************************/
 
@@ -107,11 +106,20 @@ int coldOutput;
 *******************************************************************************/
 #define DHTTYPE  DHT22                // Sensor type DHT11/21/22/AM2301/AM2302
 #define DHTPIN   4                    // Digital pin for communications
-#define DHT_SAMPLE_INTERVAL   30000   // Sample room temperature every 30 seconds
+#define DHT_SAMPLE_INTERVAL   5000    // Sample room temperature every 5 seconds
+                                      //  this is then averaged in temperatureAverage
 void dht_wrapper(); // must be declared before the lib initialization
 PietteTech_DHT DHT(DHTPIN, DHTTYPE, dht_wrapper);
 bool bDHTstarted;       // flag to indicate we started acquisition
 elapsedMillis dhtSampleInterval;
+// how many samples to take and average, more takes longer but measurement is smoother
+const int NUMBER_OF_SAMPLES = 10;
+//const float DUMMY = -100;
+//const float DUMMY_ARRAY[NUMBER_OF_SAMPLES] = { DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY };
+#define DUMMY -100
+#define DUMMY_ARRAY { DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY };
+float temperatureSamples[NUMBER_OF_SAMPLES] = DUMMY_ARRAY;
+float averageTemperature;
 
 /*******************************************************************************
  thermostat related declarations
@@ -222,6 +230,13 @@ void setup() {
   }
 
   Time.zone(TIME_ZONE);
+
+  //reset samples array to default so we fill it up with new samples
+  uint8_t i;
+  for (i=0; i<NUMBER_OF_SAMPLES; i++) {
+    temperatureSamples[i] = DUMMY;
+  }
+
 }
 
 // This wrapper is in charge of calling the DHT sensor lib
@@ -397,8 +412,38 @@ int readTemperature() {
   float tmpTemperature = (float)DHT.getCelsius();
   tmpTemperature = tmpTemperature + temperatureDifference;
 
-  //sample acquired - go ahead and store temperature and humidity in internal variables
-  publishTemperature( tmpTemperature, (float)DHT.getHumidity() );
+  //------------------------------------------------------------------
+  //let's make an average of the measured temperature
+  // by taking N samples
+  uint8_t i;
+  for (i=0; i< NUMBER_OF_SAMPLES; i++) {
+    //store the sample in the next available 'slot' in the array of samples
+    if ( temperatureSamples[i] == DUMMY ) {
+      temperatureSamples[i] = tmpTemperature;
+      break;
+    }
+  }
+
+  //is the samples array full? if not, exit and get a new sample
+  if ( temperatureSamples[NUMBER_OF_SAMPLES-1] == DUMMY ) {
+    return 0;
+  }
+
+  // average all the samples out
+  averageTemperature = 0;
+  for (i=0; i<NUMBER_OF_SAMPLES; i++) {
+    averageTemperature += temperatureSamples[i];
+  }
+  averageTemperature /= NUMBER_OF_SAMPLES;
+
+  //reset samples array to default so we fill it up again with new samples
+  for (i=0; i<NUMBER_OF_SAMPLES; i++) {
+    temperatureSamples[i] = DUMMY;
+  }
+  //------------------------------------------------------------------
+
+  //sample acquired and averaged - go ahead and store temperature and humidity in internal variables
+  publishTemperature( averageTemperature, (float)DHT.getHumidity() );
 
   //reset the sample flag so we can take another
   bDHTstarted = false;
