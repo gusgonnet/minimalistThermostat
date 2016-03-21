@@ -562,5 +562,5 @@ BLYNK_WRITE(V10)
 }
 
 String getTime() {
- return " @" + Time.format(time, TIME_FORMAT_ISO8601_FULL);
+ return " @" + Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL);
 }
