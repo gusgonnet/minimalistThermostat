@@ -22,9 +22,10 @@
 #include "elapsedMillis.h"
 #include "PietteTech_DHT.h"
 #include "FiniteStateMachine.h"
+#include "blynk.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.11";
+String VERSION = "Version 0.12";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -39,6 +40,10 @@ String VERSION = "Version 0.11";
        * added fan on/off setting via a cloud function
  * changes in version 0.11:
       * added more pushbullet notifications and commented out publish() in other cases
+ * changes in version 0.12:
+           * added blynk support
+           * added minimumIdleTimer, to protect fan and heating/cooling elements
+              from glitches
 *******************************************************************************/
 
 #define PUSHBULLET_NOTIF "pushbulletGUST"
@@ -62,13 +67,19 @@ elapsedMillis initTimer;
 
 //milliseconds to leave the fan on when the target temp has been reached
 //this evacuates the heat or the cold air from vents
-#define END_OF_CYCLE_TIMEOUT 1000
+// MY HVAC DOES THIS AUTOMATICALLY - so I have no need for this cycle
+#define END_OF_CYCLE_TIMEOUT 0
 elapsedMillis endOfCycleTimer;
 
 //minimum number of milliseconds to leave the heating element on
 // to protect on-off on the fan and the heating element
-#define MINIMUM_ON_TIMEOUT 5000
+#define MINIMUM_ON_TIMEOUT 180000
 elapsedMillis minimumOnTimer;
+
+//minimum number of milliseconds to leave the system in idle state
+// to protect the fan and the heating/cooling elements
+#define MINIMUM_IDLE_TIMEOUT 180000
+elapsedMillis minimumIdleTimer;
 
 /*******************************************************************************
  IO mapping
@@ -122,6 +133,14 @@ bool fanStatus = false;
 // this allows me to system test the project
 bool testing = false;
 
+/*******************************************************************************
+ Here you decide if you want to use Blynk or not
+*******************************************************************************/
+#define USE_BLYNK "yes"
+/*******************************************************************************
+ Your blynk token goes here - DANGER - DO NOT SHARE!!!!
+*******************************************************************************/
+char auth[] = "40ac7bdb791d4268a8f64beab4706997";
 
 /*******************************************************************************
  * Function Name  : setup
@@ -177,6 +196,11 @@ void setup() {
      Particle.publish(APP_NAME, "ERROR: Failed to register function setTesting", 60, PRIVATE);
   }
 
+  if (USE_BLYNK == "yes") {
+    //init Blynk
+    Blynk.begin(auth);
+  }
+
 }
 
 // This wrapper is in charge of calling the DHT sensor lib
@@ -196,6 +220,11 @@ void loop() {
   // the FSM is the heart of the thermostat - all actions are defined by its states
   thermostatStateMachine.update();
 
+  if (USE_BLYNK == "yes") {
+    //all the Blynk magic happens here
+    Blynk.run();
+  }
+
 }
 
 /*******************************************************************************
@@ -213,10 +242,12 @@ int setTargetTemp(String newTargetTemp)
   if ( tmpFloat > 0 ) {
     targetTemp = tmpFloat;
     targetTempString = String(targetTemp);
-    Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
+    //Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "New target temp: " + targetTempString, 60, PRIVATE);
     return 0;
   } else {
-    Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + newTargetTemp, 60, PRIVATE);
+    //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + newTargetTemp, 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new target temp to " + newTargetTemp, 60, PRIVATE);
     return -1;
   }
 }
@@ -293,6 +324,14 @@ int publishTemperature( float temperature, float humidity ) {
   Particle.publish(APP_NAME, "Home temperature: " + currentTempString, 60, PRIVATE);
   Particle.publish(APP_NAME, "Home humidity: " + currentHumidityString, 60, PRIVATE);
 
+/*
+  if (USE_BLYNK == "yes") {
+    //publish to the blynk app
+    Blynk.virtualWrite(V0, currentTemp);
+    Blynk.virtualWrite(V1, currentHumidity);
+  }
+*/
+
   return 0;
 }
 
@@ -327,6 +366,9 @@ void idleEnterFunction(){
   }
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cold, LOW);
+
+  //start the minimum timer of this cycle
+  minimumIdleTimer = 0;
 }
 void idleUpdateFunction(){
   //set the fan output to the fanStatus ONLY in this state of the FSM
@@ -338,6 +380,12 @@ void idleUpdateFunction(){
   //set it on only if it was off and fanStatus changed to true
   if ( fanStatus == true and fanOutput == LOW ) {
     myDigitalWrite(fan, HIGH);
+  }
+
+  //is minimum time up?
+  if (minimumIdleTimer < MINIMUM_IDLE_TIMEOUT) {
+    //not yet, so get out of here
+    return;
   }
 
   if ( currentTemp <= (targetTemp - margin) ) {
@@ -502,4 +550,23 @@ int setFan(String status)
   }
 
   return -1;
+}
+
+/*******************************************************************************/
+/*******************************************************************************/
+/*******************************************************************************/
+/*******************************************************************************/
+/*******************************************************************************/
+BLYNK_READ(V0)
+{
+  Blynk.virtualWrite(V0, currentTemp);
+}
+BLYNK_READ(V1)
+{
+  Blynk.virtualWrite(V1, currentHumidity);
+}
+
+BLYNK_WRITE(V10)
+{
+  setTargetTemp(param.asStr());
 }
