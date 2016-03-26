@@ -1,0 +1,4 @@
+module externalFunctions {
+external function indexOfSubstring(in charstring s1, in charstring s2, in integer offset:=0) return integer;
+external function executeCommand(in charstring command) return charstring;
+}

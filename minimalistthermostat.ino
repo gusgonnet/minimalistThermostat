@@ -17,6 +17,8 @@
 // WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
 // OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
+// github: https://github.com/gusgonnet/minimalistThermostat
+// hackster: https://www.hackster.io/gusgonnet/the-minimalist-thermostat-bb0410
 
 #include "application.h"
 #include "elapsedMillis.h"
@@ -26,14 +28,14 @@
 #include "blynkAuthToken.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.15";
+String VERSION = "Version 0.16";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
        * added minimum time to protect on-off on the fan and the heating element
           in function heatingUpdateFunction()
  * changes in version 0.10:
-       * added temperatureDifference to fix DHT measurements with existing thermostat
+       * added temperatureCalibration to fix DHT measurements with existing thermostat
        * reduced END_OF_CYCLE_TIMEOUT to one sec since my HVAC controller
           takes care of running the fan for a minute to evacuate the heat/cold
           from the vents
@@ -52,7 +54,22 @@ String VERSION = "Version 0.15";
            * debouncing target temp and fan status
  * changes in version 0.15:
            * taking few samples and averaging the temperature to improve stability
+ * changes in version 0.16:
+           * discarding samples below 0 celsius for those times when the reading of
+              the dht sensor goes wrong
+           * adding date/time in notifications in a new line
+           * leave only 2 decimals in temp notifications (19.00 instead of 19.000000)
+           * improving blynk project
+           * fine tunning the testing mode
+           * adding Titan test scripts (more info on a hackster article to be written soon)
 
+TODO:
+  * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
+              source for discussion: https://community.particle.io/t/the-minimalist-thermostat/19436
+              source for docs: https://docs.particle.io/reference/firmware/photon/#system-thread
+  * add enable/disable setting to be able to switch off the whole system
+  * create a function that sets the fan on and contains this code below in function myDigitalWrite()
+     if (USE_BLYNK == "yes") {
 *******************************************************************************/
 
 #define PUSHBULLET_NOTIF "pushbulletGUST"
@@ -76,12 +93,12 @@ elapsedMillis initTimer;
 
 //minimum number of milliseconds to leave the heating element on
 // to protect on-off on the fan and the heating/cooling elements
-#define MINIMUM_ON_TIMEOUT 180000
+#define MINIMUM_ON_TIMEOUT 60000
 elapsedMillis minimumOnTimer;
 
 //minimum number of milliseconds to leave the system in idle state
 // to protect the fan and the heating/cooling elements
-#define MINIMUM_IDLE_TIMEOUT 180000
+#define MINIMUM_IDLE_TIMEOUT 60000
 elapsedMillis minimumIdleTimer;
 
 /*******************************************************************************
@@ -132,12 +149,12 @@ float currentHumidity = 0.0;
 //you can change this to your liking
 // a smaller value will make your temperature more constant at the price of
 //  starting the heat more times
-// a larger value will reduce the number the HVAC comes on but will leave it on a longer time
+// a larger value will reduce the number of times the HVAC comes on but will leave it on a longer time
 float margin = 0.25;
 
 //DHT difference with real temperature (if none set to zero)
 //use this variable to fix DHT measurements with your existing thermostat
-float temperatureDifference = -1.6;
+float temperatureCalibration = -1.35;
 
 //temperature related variables - to be exposed in the cloud
 String targetTempString = String(targetTemp); //String to store the target temp so it can be exposed and set
@@ -168,7 +185,11 @@ bool testing = false;
 *******************************************************************************/
 #define USE_BLYNK "yes"
 char auth[] = BLYNK_AUTH_TOKEN;
+WidgetLED fanStatusLed(V3); //register led to virtual pin 3
 
+//enable the user code (our program below) to run in parallel with cloud connectivity code
+// source: https://docs.particle.io/reference/firmware/photon/#system-thread
+//SYSTEM_THREAD(ENABLED);
 
 /*******************************************************************************
  * Function Name  : setup
@@ -270,6 +291,9 @@ void loop() {
  * Function Name  : setTargetTemp
  * Description    : sets the target temperature of the thermostat
                     newTargetTemp has to be a valid float value, or no new target temp will be set
+ * Behavior       : the new setting will not take place right away, but moments after
+                    since a timer is triggered. This is to debounce the setting and
+                    allow the users to change their mind
  * Return         : 0, or -1 if it fails to convert the temp to float
  *******************************************************************************/
 int setTargetTemp(String temp)
@@ -280,12 +304,16 @@ int setTargetTemp(String temp)
   // sorry, if you wanted to set 0 as the target temp, you can't :)
   if ( tmpFloat > 0 ) {
     //newTargetTemp will be copied to targetTemp moments after in function updateTargetTemp()
-    // this is to 1-debounce blynk and 2-debounce the user changing his/her mind quickly
+    // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
     newTargetTemp = tmpFloat;
     //start timer to debounce this new setting
     setNewTargetTempTimer = 0;
     return 0;
   }
+
+  //show only 2 decimals in notifications
+  // Example: show 19.00 instead of 19.000000
+  temp = temp.substring(0, temp.length()-4);
 
   //if the execution reaches here then the value was invalid
   //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
@@ -312,6 +340,11 @@ void updateTargetTemp()
 
   targetTemp = newTargetTemp;
   targetTempString = String(targetTemp);
+
+  //show only 2 decimals in notifications
+  // Example: show 19.00 instead of 19.000000
+  targetTempString = targetTempString.substring(0, targetTempString.length()-4);
+
   //Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
   Particle.publish(PUSHBULLET_NOTIF, "New target temp: " + targetTempString + getTime(), 60, PRIVATE);
 }
@@ -319,6 +352,9 @@ void updateTargetTemp()
 /*******************************************************************************
  * Function Name  : setFanStatus
  * Description    : sets the status of the Fan on or off
+ * Behavior       : the new setting will not take place right away, but moments after
+                    since a timer is triggered. This is to debounce the setting and
+                    allow the users to change their mind
  * Return         : 0, or -1 if the parameter does not match on or off
  *******************************************************************************/
 int setFanStatus(String status)
@@ -326,7 +362,7 @@ int setFanStatus(String status)
   //update the fan status only in the case the status is on or off
   if ( status == "on" ) {
     //newFanStatus will be copied to fanStatus moments after in function updateTargetTemp()
-    // this is to 1-debounce blynk and 2-debounce the user changing his/her mind quickly
+    // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
     newFanStatus = true;
     //start timer to debounce this new setting
     setNewFanStatusTimer = 0;
@@ -334,13 +370,14 @@ int setFanStatus(String status)
   }
   if ( status == "off" ) {
     //newFanStatus will be copied to fanStatus moments after in function updateTargetTemp()
-    // this is to 1-debounce blynk and 2-debounce the user changing his/her mind quickly
+    // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
     newFanStatus = false;
     //start timer to debounce this new setting
     setNewFanStatusTimer = 0;
     return 0;
   }
 
+  Particle.publish(APP_NAME, "ERROR: Failed to set fan status to " + status, 60, PRIVATE);
   return -1;
 }
 
@@ -365,10 +402,16 @@ void updateFanStatus()
   if (newFanStatus) {
     fanStatus = true;
     Particle.publish(PUSHBULLET_NOTIF, "Fan on" + getTime(), 60, PRIVATE);
+//    if (USE_BLYNK == "yes") {
+//      fanStatusLed.on();
+//    }
     return;
   } else {
     fanStatus = false;
     Particle.publish(PUSHBULLET_NOTIF, "Fan off" + getTime(), 60, PRIVATE);
+//    if (USE_BLYNK == "yes") {
+//      fanStatusLed.off();
+//    }
     return;
   }
 
@@ -403,14 +446,21 @@ int readTemperature() {
     bDHTstarted = true;
   }
 
-  //still acquiring sample? go away
+  //still acquiring sample? go away and come back later
   if (DHT.acquiring()) {
     return 0;
   }
 
-  //sample acquired, adjust DHT difference if any
+  //I observed my dht22 measuring below 0 from time to time, so let's discard that sample
+  if ( DHT.getCelsius() < 0 ) {
+    //reset the sample flag so we can take another
+    bDHTstarted = false;
+    return 0;
+  }
+
+  //valid sample acquired, adjust DHT difference if any
   float tmpTemperature = (float)DHT.getCelsius();
-  tmpTemperature = tmpTemperature + temperatureDifference;
+  tmpTemperature = tmpTemperature + temperatureCalibration;
 
   //------------------------------------------------------------------
   //let's make an average of the measured temperature
@@ -476,14 +526,6 @@ int publishTemperature( float temperature, float humidity ) {
   //publish readings
   Particle.publish(APP_NAME, "Home temperature: " + currentTempString, 60, PRIVATE);
   Particle.publish(APP_NAME, "Home humidity: " + currentHumidityString, 60, PRIVATE);
-
-/*
-  if (USE_BLYNK == "yes") {
-    //publish to the blynk app
-    Blynk.virtualWrite(V0, currentTemp);
-    Blynk.virtualWrite(V1, currentHumidity);
-  }
-*/
 
   return 0;
 }
@@ -591,14 +633,19 @@ void heatingExitFunction(){
 
 /*******************************************************************************
  * Function Name  : setTesting
- * Description    : sets the testing variable to true - this enables me to override
-                     the temperature read by the DHT sensor.
-                    this is a hack that allows me to system test the project
+ * Description    : allows to start testing mode
+                    testing mode enables an override of the temperature read
+                     by the temperature sensor.
+                    this is a hack that allows system testing the project
  * Return         : 0
  *******************************************************************************/
-int setTesting(String dummy)
+int setTesting(String test)
 {
-  testing = true;
+  if ( test == "on" ) {
+    testing = true;
+  } else {
+    testing = false;
+  }
   return 0;
 }
 
@@ -633,6 +680,11 @@ int setCurrentTemp(String newCurrentTemp)
   if ( tmpFloat > 0 ) {
     currentTemp = tmpFloat;
     currentTempString = String(currentTemp);
+
+    //show only 2 decimals in notifications
+    // Example: show 19.00 instead of 19.000000
+    currentTempString = currentTempString.substring(0, currentTempString.length()-4);
+
     //Particle.publish(APP_NAME, "New current temp: " + currentTempString, 60, PRIVATE);
     Particle.publish(PUSHBULLET_NOTIF, "New current temp: " + currentTempString + getTime(), 60, PRIVATE);
     return 0;
@@ -652,9 +704,19 @@ int setCurrentTemp(String newCurrentTemp)
  *******************************************************************************/
 void myDigitalWrite(int input, int status){
   digitalWrite(input, status);
+
   if (input == fan){
     fanOutput = status;
+    //TODO: create a function that sets fan on and contains this code below
+    if (USE_BLYNK == "yes") {
+      if ( status ) {
+        fanStatusLed.on();
+      } else {
+        fanStatusLed.off();
+      }
+    }
   }
+
   if (input == heat){
     heatOutput = status;
   }
@@ -668,20 +730,63 @@ void myDigitalWrite(int input, int status){
 /*******************************************************************************/
 /*******************************************************************************/
 /*******************************************************************************/
-BLYNK_READ(V0)
-{
+BLYNK_READ(V0) {
+  //this is a blynk value display
+  // source: http://docs.blynk.cc/#widgets-displays-value-display
   Blynk.virtualWrite(V0, currentTemp);
 }
-BLYNK_READ(V1)
-{
+BLYNK_READ(V1) {
+  //this is a blynk value display
+  // source: http://docs.blynk.cc/#widgets-displays-value-display
   Blynk.virtualWrite(V1, currentHumidity);
 }
-
-BLYNK_WRITE(V10)
-{
-  setTargetTemp(param.asStr());
+BLYNK_READ(V2) {
+  //this is a blynk value display
+  // source: http://docs.blynk.cc/#widgets-displays-value-display
+  Blynk.virtualWrite(V2, targetTemp);
+}
+BLYNK_READ(V3) {
+  //this is a blynk led
+  // source: http://docs.blynk.cc/#widgets-displays-led
+  if ( fanStatus ) {
+    fanStatusLed.on();
+  } else {
+    fanStatusLed.off();
+  }
+  //Blynk.virtualWrite(V3, fanStatus);
 }
 
+BLYNK_WRITE(V10) {
+  //this is the blynk slider
+  // source: http://docs.blynk.cc/#widgets-controllers-slider
+  setTargetTemp(param.asStr());
+}
+BLYNK_WRITE(V11) {
+  //flip fan status, if it's on switch it off and viceversa
+  // do this only when blynk sends a 1
+  // background: in a push button as my project is using, blynk sends 0 then 1
+  // source: http://docs.blynk.cc/#widgets-controllers-button
+  if ( param.asInt() == 1 ) {
+    if ( fanStatus ){
+      setFanStatus("off");
+    } else {
+      setFanStatus("on");
+    }
+  }
+}
+
+BLYNK_CONNECTED() {
+  Blynk.syncVirtual(V0);
+  Blynk.syncVirtual(V1);
+  Blynk.syncVirtual(V2);
+  Blynk.syncVirtual(V3);
+}
+
+
+//example: Heat on @2016-03-23T14:42:31-04:00
 String getTime() {
- return " @" + Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL);
+  String timeNow = Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL);
+  timeNow = timeNow.substring(0, timeNow.length()-6);
+  // return "\n@" + timeNow;
+  return " " + timeNow;
 }

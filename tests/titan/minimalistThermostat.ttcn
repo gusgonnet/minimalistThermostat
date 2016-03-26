@@ -1,0 +1,123 @@
+/*=============================================================================================================
+//The MIT License (MIT)
+//Copyright (c) 2016 Gustavo Gonnet
+//
+//Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+// and associated documentation files (the "Software"), to deal in the Software without restriction,
+// including without limitation the rights to use, copy, modify, merge, publish, distribute,
+// sublicense, and/or sell copies of the Software, and to permit persons to whom the Software
+// is furnished to do so, subject to the following conditions:
+//
+//The above copyright notice and this permission notice shall be included in all copies
+// or substantial portions of the Software.
+//
+//THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+// PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+// WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
+// OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
+// github: https://github.com/gusgonnet/minimalistThermostat
+// hackster: https://www.hackster.io/gusgonnet/the-minimalist-thermostat-bb0410
+//==============================================================================================================*/
+
+module minimalistThermostat {
+
+import from externalFunctions all;
+
+testcase test1()
+runs on particleComponent {
+
+	@try {
+
+		log("starting ...");
+		setverdict(pass, "La vie est belle!");
+
+		//enable testing and set target  temp to 20 degrees
+		exec(setTestingOn, RESPONSE_OK);
+		exec(setTargetTmp & " \"20.0\"", RESPONSE_OK);
+		exec(setCurrTmp & " \"20.0\"", RESPONSE_OK);
+		pause(20.0, "give time to set temperatures");
+
+		//verify outputs are all low
+		exec(getOutputs, ALL_OFF);
+
+		//simulate user setting temp to 22 degrees
+		exec(setTargetTmp & " \"22.0\"", RESPONSE_OK);
+
+		//since user just set desired temp to 22, and current temp is 20, fan and heating should turn on
+		//verify fan and heating are on
+		pause(15.0, "give time to start heating");
+		exec(getOutputs, FAN_ON_HEAT_ON);
+
+		//let minimumOnTimer time out
+		pause(120.0, "let minimumOnTimer time out");
+
+		//target temp reached
+		// this means the thermostat will turn off the heating and the fan
+		exec(setCurrTmp & " \"23.0\"", RESPONSE_OK);
+
+		//verify heating and fan are turned off 
+		pause(15.0, "give time to stop heating and fan");
+		exec(getOutputs, ALL_OFF);
+
+		//disable testing
+		exec(setTestingOff, RESPONSE_OK);
+
+	} @catch(exception_) { 
+		log("Dynamic testcase error detected: " & exception_);
+		setverdict(fail);
+	}
+
+}
+
+function exec( 
+	in charstring command,
+	in charstring expectedAnswer )
+runs on particleComponent
+{
+	var charstring responseString := executeCommand(command);
+
+	if(indexOfSubstring(responseString, expectedAnswer) > -1 ) {
+		log("Expected response received");
+		setverdict(pass);
+	} else {
+		log("ERROR: did not receive expected response :", expectedAnswer);
+		setverdict(fail);
+	}
+
+}
+
+function pause ( 
+	in float seconds,
+	in charstring reasonOfThePause )
+{
+	if ( (getverdict != pass)  ) {
+		return;
+	}
+	log("Pausing for " & float2str(seconds) & " seconds due to ", reasonOfThePause ); 
+	timer pauseTimer := seconds; 
+	pauseTimer.start;
+	pauseTimer.timeout;  
+}
+
+type component particleComponent {}
+
+const charstring particleCommand := "particle call thermostat ";
+const charstring setTestingOn := particleCommand & "setTesting on";
+const charstring setTestingOff := particleCommand & "setTesting off";
+const charstring setTargetTmp := particleCommand & "setTargetTmp ";
+const charstring setCurrTmp := particleCommand & "setCurrTmp ";
+const charstring getOutputs := particleCommand & "getOutputs";
+
+//0 means command executed correctly
+const charstring RESPONSE_OK := "0";
+
+//constants for getOutputs()
+const charstring ALL_OFF := "0";
+const charstring FAN_ON := "1";
+const charstring FAN_ON_HEAT_ON := "3";
+const charstring FAN_ON_COOL_ON := "5";
+
+}
