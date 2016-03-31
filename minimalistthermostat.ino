@@ -56,8 +56,8 @@ String VERSION = "Version 0.16";
            * taking few samples and averaging the temperature to improve stability
  * changes in version 0.16:
            * discarding samples below 0 celsius for those times when the reading of
-              the dht sensor goes wrong
-           * adding date/time in notifications in a new line
+              the temperature sensor goes wrong
+           * adding date/time in notifications
            * leave only 2 decimals in temp notifications (19.00 instead of 19.000000)
            * improving blynk project
            * fine tunning the testing mode

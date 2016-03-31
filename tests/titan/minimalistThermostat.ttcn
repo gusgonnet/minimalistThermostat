@@ -34,6 +34,9 @@ runs on particleComponent {
 		log("starting ...");
 		setverdict(pass, "La vie est belle!");
 
+		//***************************************************************************
+		// TEST STEP 1: simulate that the current temperature is 20 degrees Celsius
+		//***************************************************************************
 		//enable testing and set target  temp to 20 degrees
 		exec(setTestingOn, RESPONSE_OK);
 		exec(setTargetTmp & " \"20.0\"", RESPONSE_OK);
@@ -43,9 +46,15 @@ runs on particleComponent {
 		//verify outputs are all low
 		exec(getOutputs, ALL_OFF);
 
+		//***************************************************************************
+		// TEST STEP 2: set the desired temperature to 22 degrees Celsius
+		//***************************************************************************
 		//simulate user setting temp to 22 degrees
 		exec(setTargetTmp & " \"22.0\"", RESPONSE_OK);
 
+		//***************************************************************************
+		// TEST STEP 3: Verify that the fan and the heat outputs are set to ON
+		//***************************************************************************
 		//since user just set desired temp to 22, and current temp is 20, fan and heating should turn on
 		//verify fan and heating are on
 		pause(15.0, "give time to start heating");
@@ -54,10 +63,15 @@ runs on particleComponent {
 		//let minimumOnTimer time out
 		pause(120.0, "let minimumOnTimer time out");
 
-		//target temp reached
-		// this means the thermostat will turn off the heating and the fan
+		//***************************************************************************
+		// TEST STEP 4: simulate that the current temperature reached 23 degrees
+		//***************************************************************************
+		//target temp reached, this means the thermostat will turn off the heating and the fan
 		exec(setCurrTmp & " \"23.0\"", RESPONSE_OK);
 
+		//***************************************************************************
+		// TEST STEP 5: Verify that the fan and the heat outputs are set to OFF
+		//***************************************************************************
 		//verify heating and fan are turned off 
 		pause(15.0, "give time to stop heating and fan");
 		exec(getOutputs, ALL_OFF);
