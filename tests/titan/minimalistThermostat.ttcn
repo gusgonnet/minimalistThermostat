@@ -34,6 +34,13 @@ runs on particleComponent {
 		log("starting ...");
 		setverdict(pass, "La vie est belle!");
 
+		var charstring particleCommand := "particle call " & photonName & " ";
+		var charstring setTestingOn := particleCommand & "setTesting on";
+		var charstring setTestingOff := particleCommand & "setTesting off";
+		var charstring setTargetTmp := particleCommand & "setTargetTmp ";
+		var charstring setCurrTmp := particleCommand & "setCurrTmp ";
+		var charstring getOutputs := particleCommand & "getOutputs";
+
 		//***************************************************************************
 		// TEST STEP 1: simulate that the current temperature is 20 degrees Celsius
 		//***************************************************************************
@@ -116,14 +123,10 @@ function pause (
 	pauseTimer.timeout;  
 }
 
-type component particleComponent {}
+//set this variable in the minimalistThermostat.cfg file to match the name of your photon or core
+modulepar charstring photonName := "thermostat";
 
-const charstring particleCommand := "particle call thermostat ";
-const charstring setTestingOn := particleCommand & "setTesting on";
-const charstring setTestingOff := particleCommand & "setTesting off";
-const charstring setTargetTmp := particleCommand & "setTargetTmp ";
-const charstring setCurrTmp := particleCommand & "setCurrTmp ";
-const charstring getOutputs := particleCommand & "getOutputs";
+type component particleComponent {}
 
 //0 means command executed correctly
 const charstring RESPONSE_OK := "0";
