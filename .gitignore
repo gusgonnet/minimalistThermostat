@@ -6,3 +6,4 @@ PietteTech_DHT.h
 *.bin
 blynk
 blynk.h
+blynkAuthToken.h
