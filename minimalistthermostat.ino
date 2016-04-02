@@ -37,7 +37,7 @@ String VERSION = "Version 0.16";
  * changes in version 0.10:
        * added temperatureCalibration to fix DHT measurements with existing thermostat
        * reduced END_OF_CYCLE_TIMEOUT to one sec since my HVAC controller
-          takes care of running the fan for a minute to evacuate the heat/cold
+          takes care of running the fan for a minute to evacuate the heat/cool air
           from the vents
        * added pushbullet notifications for heating on/off
        * added fan on/off setting via a cloud function
@@ -106,17 +106,17 @@ elapsedMillis minimumIdleTimer;
 *******************************************************************************/
 // D0 : relay: fan
 // D1 : relay: heat
-// D2 : relay: cold
+// D2 : relay: cool
 // D4 : DHT22
 // D3, D5~D7 : unused
 // A0~A7 : unused
 int fan = D0;
 int heat = D1;
-int cold = D2;
+int cool = D2;
 //TESTING_HACK
 int fanOutput;
 int heatOutput;
-int coldOutput;
+int coolOutput;
 
 /*******************************************************************************
  DHT sensor
@@ -203,10 +203,10 @@ void setup() {
   //declare and init pins
   pinMode(fan, OUTPUT);
   pinMode(heat, OUTPUT);
-  pinMode(cold, OUTPUT);
+  pinMode(cool, OUTPUT);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
-  myDigitalWrite(cold, LOW);
+  myDigitalWrite(cool, LOW);
 
   //declare cloud variables
   //https://docs.particle.io/reference/firmware/photon/#particle-variable-
@@ -560,7 +560,7 @@ void idleEnterFunction(){
     myDigitalWrite(fan, LOW);
   }
   myDigitalWrite(heat, LOW);
-  myDigitalWrite(cold, LOW);
+  myDigitalWrite(cool, LOW);
 
   //start the minimum timer of this cycle
   minimumIdleTimer = 0;
@@ -597,7 +597,7 @@ void heatingEnterFunction(){
   Particle.publish(PUSHBULLET_NOTIF, "Heat on" + getTime(), 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, HIGH);
-  myDigitalWrite(cold, LOW);
+  myDigitalWrite(cool, LOW);
 
   //start the minimum timer of this cycle
   minimumOnTimer = 0;
@@ -620,7 +620,7 @@ void heatingExitFunction(){
   Particle.publish(PUSHBULLET_NOTIF, "Heat off" + getTime(), 60, PRIVATE);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
-  myDigitalWrite(cold, LOW);
+  myDigitalWrite(cool, LOW);
 }
 
 /*******************************************************************************
@@ -659,8 +659,8 @@ int getOutputs(String dummy)
 {
   // int fan = D0;
   // int heat = D1;
-  // int cold = D2;
-  return coldOutput*4 + heatOutput*2 + fanOutput*1;
+  // int cool = D2;
+  return coolOutput*4 + heatOutput*2 + fanOutput*1;
 }
 
 /*******************************************************************************
@@ -720,8 +720,8 @@ void myDigitalWrite(int input, int status){
   if (input == heat){
     heatOutput = status;
   }
-  if (input == cold){
-    coldOutput = status;
+  if (input == cool){
+    coolOutput = status;
   }
 }
 
