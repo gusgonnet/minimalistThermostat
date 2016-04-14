@@ -68,7 +68,7 @@ runs on particleComponent {
 		exec(getOutputs, FAN_ON_HEAT_ON);
 
 		//let minimumOnTimer time out
-		pause(120.0, "let minimumOnTimer time out");
+		pause(60.0, "let minimumOnTimer time out");
 
 		//***************************************************************************
 		// TEST STEP 4: simulate that the current temperature reached 23 degrees
@@ -79,21 +79,21 @@ runs on particleComponent {
 		//***************************************************************************
 		// TEST STEP 5: Verify that the fan and the heat outputs are set to OFF
 		//***************************************************************************
-		//verify heating and fan are turned off 
+		//verify heating and fan are turned off
 		pause(15.0, "give time to stop heating and fan");
 		exec(getOutputs, ALL_OFF);
 
 		//disable testing
 		exec(setTestingOff, RESPONSE_OK);
 
-	} @catch(exception_) { 
+	} @catch(exception_) {
 		log("Dynamic testcase error detected: " & exception_);
 		setverdict(fail);
 	}
 
 }
 
-function exec( 
+function exec(
 	in charstring command,
 	in charstring expectedAnswer )
 runs on particleComponent
@@ -110,17 +110,17 @@ runs on particleComponent
 
 }
 
-function pause ( 
+function pause (
 	in float seconds,
 	in charstring reasonOfThePause )
 {
 	if ( (getverdict != pass)  ) {
 		return;
 	}
-	log("Pausing for " & float2str(seconds) & " seconds due to ", reasonOfThePause ); 
-	timer pauseTimer := seconds; 
+	log("Pausing for " & float2str(seconds) & " seconds due to ", reasonOfThePause );
+	timer pauseTimer := seconds;
 	pauseTimer.start;
-	pauseTimer.timeout;  
+	pauseTimer.timeout;
 }
 
 //set this variable in the minimalistThermostat.cfg file to match the name of your photon or core

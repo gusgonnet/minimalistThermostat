@@ -28,7 +28,7 @@
 #include "blynkAuthToken.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.16";
+String VERSION = "Version 0.17";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -61,7 +61,13 @@ String VERSION = "Version 0.16";
            * leave only 2 decimals in temp notifications (19.00 instead of 19.000000)
            * improving blynk project
            * fine tunning the testing mode
-           * adding Titan test scripts (more info on a hackster article to be written soon)
+           * adding Titan test scripts
+              more info here: https://www.hackster.io/gusgonnet/how-to-test-your-projects-with-titan-a633f2
+ * changes in version 0.17:
+           * PUSHBULLET_NOTIF renamed to PUSHBULLET_NOTIF_PERSONAL
+           * removed yyyy-mm-dd from notifications and left only hh:mm:ss
+           * minor changes in temp/humidity reported with Particle.publish()
+           * reporting targetTemp when desired temp is reached
 
 TODO:
   * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
@@ -70,9 +76,14 @@ TODO:
   * add enable/disable setting to be able to switch off the whole system
   * create a function that sets the fan on and contains this code below in function myDigitalWrite()
      if (USE_BLYNK == "yes") {
+  * store settings in eeprom
+  * add cooling support
+  * create a state variable (idle, heating, cooling, off, fan on)
+  * create a pulse of heating for warming up the house a bit
 *******************************************************************************/
 
-#define PUSHBULLET_NOTIF "pushbulletGUST"
+#define PUSHBULLET_NOTIF_HOME "pushbulletHOME"         //-> family group in pushbullet
+#define PUSHBULLET_NOTIF_PERSONAL "pushbulletPERSONAL" //-> only my phone
 const int TIME_ZONE = -4;
 
 /*******************************************************************************
@@ -317,7 +328,7 @@ int setTargetTemp(String temp)
 
   //if the execution reaches here then the value was invalid
   //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
-  Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
   return -1;
 }
 
@@ -346,7 +357,7 @@ void updateTargetTemp()
   targetTempString = targetTempString.substring(0, targetTempString.length()-4);
 
   //Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
-  Particle.publish(PUSHBULLET_NOTIF, "New target temp: " + targetTempString + getTime(), 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New target temp: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
 }
 
 /*******************************************************************************
@@ -401,17 +412,11 @@ void updateFanStatus()
   //update the fan status only in the case the status is on or off
   if (newFanStatus) {
     fanStatus = true;
-    Particle.publish(PUSHBULLET_NOTIF, "Fan on" + getTime(), 60, PRIVATE);
-//    if (USE_BLYNK == "yes") {
-//      fanStatusLed.on();
-//    }
+    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan on" + getTime(), 60, PRIVATE);
     return;
   } else {
     fanStatus = false;
-    Particle.publish(PUSHBULLET_NOTIF, "Fan off" + getTime(), 60, PRIVATE);
-//    if (USE_BLYNK == "yes") {
-//      fanStatusLed.off();
-//    }
+    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan off" + getTime(), 60, PRIVATE);
     return;
   }
 
@@ -524,8 +529,7 @@ int publishTemperature( float temperature, float humidity ) {
   currentHumidityString = String(currentHumidityChar);
 
   //publish readings
-  Particle.publish(APP_NAME, "Home temperature: " + currentTempString, 60, PRIVATE);
-  Particle.publish(APP_NAME, "Home humidity: " + currentHumidityString, 60, PRIVATE);
+  Particle.publish(APP_NAME, "Home: " + currentTempString + "°C " + currentHumidityString + "%", 60, PRIVATE);
 
   return 0;
 }
@@ -594,7 +598,7 @@ void idleExitFunction(){
 
 void heatingEnterFunction(){
   //Particle.publish(APP_NAME, "heatingEnterFunction", 60, PRIVATE);
-  Particle.publish(PUSHBULLET_NOTIF, "Heat on" + getTime(), 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat on" + getTime(), 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, HIGH);
   myDigitalWrite(cool, LOW);
@@ -611,13 +615,13 @@ void heatingUpdateFunction(){
 
   if ( currentTemp >= (targetTemp + margin) ) {
     //Particle.publish(APP_NAME, "Desired temperature reached", 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "Desired temperature reached" + getTime(), 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
     thermostatStateMachine.transitionTo(idleState);
   }
 }
 void heatingExitFunction(){
   //Particle.publish(APP_NAME, "heatingExitFunction", 60, PRIVATE);
-  Particle.publish(PUSHBULLET_NOTIF, "Heat off" + getTime(), 60, PRIVATE);
+  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat off" + getTime(), 60, PRIVATE);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, LOW);
@@ -641,7 +645,7 @@ void heatingExitFunction(){
  *******************************************************************************/
 int setTesting(String test)
 {
-  if ( test == "on" ) {
+  if ( test.equalsIgnoreCase("on") ) {
     testing = true;
   } else {
     testing = false;
@@ -686,11 +690,11 @@ int setCurrentTemp(String newCurrentTemp)
     currentTempString = currentTempString.substring(0, currentTempString.length()-4);
 
     //Particle.publish(APP_NAME, "New current temp: " + currentTempString, 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "New current temp: " + currentTempString + getTime(), 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New current temp: " + currentTempString + getTime(), 60, PRIVATE);
     return 0;
   } else {
     //Particle.publish(APP_NAME, "ERROR: Failed to set new current temp to " + newCurrentTemp, 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF, "ERROR: Failed to set new current temp to " + newCurrentTemp + getTime(), 60, PRIVATE);
+    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new current temp to " + newCurrentTemp + getTime(), 60, PRIVATE);
     return -1;
   }
 }
@@ -703,18 +707,12 @@ int setCurrentTemp(String newCurrentTemp)
  * Return         : void
  *******************************************************************************/
 void myDigitalWrite(int input, int status){
+
   digitalWrite(input, status);
 
   if (input == fan){
     fanOutput = status;
-    //TODO: create a function that sets fan on and contains this code below
-    if (USE_BLYNK == "yes") {
-      if ( status ) {
-        fanStatusLed.on();
-      } else {
-        fanStatusLed.off();
-      }
-    }
+    BLYNK_setFanStatus(status);
   }
 
   if (input == heat){
@@ -764,13 +762,23 @@ BLYNK_WRITE(V10) {
 BLYNK_WRITE(V11) {
   //flip fan status, if it's on switch it off and viceversa
   // do this only when blynk sends a 1
-  // background: in a push button as my project is using, blynk sends 0 then 1
+  // background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
   // source: http://docs.blynk.cc/#widgets-controllers-button
   if ( param.asInt() == 1 ) {
     if ( fanStatus ){
       setFanStatus("off");
     } else {
       setFanStatus("on");
+    }
+  }
+}
+
+void BLYNK_setFanStatus(int status) {
+  if (USE_BLYNK == "yes") {
+    if ( status ) {
+      fanStatusLed.on();
+    } else {
+      fanStatusLed.off();
     }
   }
 }
@@ -786,7 +794,6 @@ BLYNK_CONNECTED() {
 //example: Heat on @2016-03-23T14:42:31-04:00
 String getTime() {
   String timeNow = Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL);
-  timeNow = timeNow.substring(0, timeNow.length()-6);
-  // return "\n@" + timeNow;
+  timeNow = timeNow.substring(11, timeNow.length()-6);
   return " " + timeNow;
 }
