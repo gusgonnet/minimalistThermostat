@@ -28,7 +28,7 @@
 #include "blynkAuthToken.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.17";
+String VERSION = "Version 0.18";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -68,18 +68,20 @@ String VERSION = "Version 0.17";
            * removed yyyy-mm-dd from notifications and left only hh:mm:ss
            * minor changes in temp/humidity reported with Particle.publish()
            * reporting targetTemp when desired temp is reached
+ * changes in version 0.18:
+           * created a pulse of heating for warming up the house a bit
+           * created a function that sets the fan on and contains this code below in function myDigitalWrite()
+              if (USE_BLYNK == "yes") {
+           * updated the blynk app
 
 TODO:
   * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
               source for discussion: https://community.particle.io/t/the-minimalist-thermostat/19436
               source for docs: https://docs.particle.io/reference/firmware/photon/#system-thread
   * add enable/disable setting to be able to switch off the whole system
-  * create a function that sets the fan on and contains this code below in function myDigitalWrite()
-     if (USE_BLYNK == "yes") {
   * store settings in eeprom
   * add cooling support
   * create a state variable (idle, heating, cooling, off, fan on)
-  * create a pulse of heating for warming up the house a bit
 *******************************************************************************/
 
 #define PUSHBULLET_NOTIF_HOME "pushbulletHOME"         //-> family group in pushbullet
@@ -92,6 +94,7 @@ const int TIME_ZONE = -4;
 State initState = State( initEnterFunction, initUpdateFunction, initExitFunction );
 State idleState = State( idleEnterFunction, idleUpdateFunction, idleExitFunction );
 State heatingState = State( heatingEnterFunction, heatingUpdateFunction, heatingExitFunction );
+State pulseState = State( pulseEnterFunction, pulseUpdateFunction, pulseExitFunction );
 
 //initialize state machine, start in state: Idle
 FSM thermostatStateMachine = FSM(initState);
@@ -111,6 +114,12 @@ elapsedMillis minimumOnTimer;
 // to protect the fan and the heating/cooling elements
 #define MINIMUM_IDLE_TIMEOUT 60000
 elapsedMillis minimumIdleTimer;
+
+//milliseconds to pulse on the heating = 600 seconds = 10 minutes
+// turns the heating on for a certain time
+// comes in handy when you want to warm up the house a little bit
+#define PULSE_TIMEOUT 600000
+elapsedMillis pulseTimer;
 
 /*******************************************************************************
  IO mapping
@@ -181,6 +190,10 @@ elapsedMillis setNewTargetTempTimer;
 bool newFanStatus = false;
 elapsedMillis setNewFanStatusTimer;
 
+bool pulseStatus = false;
+bool newPulseStatus = false;
+elapsedMillis setNewPulseStatusTimer;
+
 //TESTING_HACK
 // this allows me to system test the project
 bool testing = false;
@@ -188,8 +201,8 @@ bool testing = false;
 /*******************************************************************************
  Here you decide if you want to use Blynk or not
  Your blynk token goes in another file to avoid sharing it by mistake
-  (like I just did in my last commit)
- The file containing your token has to be named blynkAuthToken.h and it should contain
+  (like I did in one of my commits some time ago)
+ The file containing your blynk auth token has to be named blynkAuthToken.h and it should contain
  something like this:
   #define BLYNK_AUTH_TOKEN "1234567890123456789012345678901234567890"
  replace with your project auth token (the blynk app will give you one)
@@ -197,6 +210,9 @@ bool testing = false;
 #define USE_BLYNK "yes"
 char auth[] = BLYNK_AUTH_TOKEN;
 WidgetLED fanStatusLed(V3); //register led to virtual pin 3
+WidgetLED heatLed(V4); //register led to virtual pin 4
+WidgetLED coolLed(V5); //register led to virtual pin 5
+WidgetLED pulseLed(V6); //register led to virtual pin 6
 
 //enable the user code (our program below) to run in parallel with cloud connectivity code
 // source: https://docs.particle.io/reference/firmware/photon/#system-thread
@@ -284,10 +300,6 @@ void loop() {
   //this function reads the temperature of the DHT sensor
   readTemperature();
 
-  //this function updates the FSM
-  // the FSM is the heart of the thermostat - all actions are defined by its states
-  thermostatStateMachine.update();
-
   if (USE_BLYNK == "yes") {
     //all the Blynk magic happens here
     Blynk.run();
@@ -295,6 +307,11 @@ void loop() {
 
   updateTargetTemp();
   updateFanStatus();
+  updatePulseStatus();
+
+  //this function updates the FSM
+  // the FSM is the heart of the thermostat - all actions are defined by its states
+  thermostatStateMachine.update();
 
 }
 
@@ -305,7 +322,7 @@ void loop() {
  * Behavior       : the new setting will not take place right away, but moments after
                     since a timer is triggered. This is to debounce the setting and
                     allow the users to change their mind
- * Return         : 0, or -1 if it fails to convert the temp to float
+* Return         : 0 if all is good, or -1 if the parameter does not match on or off
  *******************************************************************************/
 int setTargetTemp(String temp)
 {
@@ -366,13 +383,13 @@ void updateTargetTemp()
  * Behavior       : the new setting will not take place right away, but moments after
                     since a timer is triggered. This is to debounce the setting and
                     allow the users to change their mind
- * Return         : 0, or -1 if the parameter does not match on or off
+* Return         : 0 if all is good, or -1 if the parameter does not match on or off
  *******************************************************************************/
 int setFanStatus(String status)
 {
   //update the fan status only in the case the status is on or off
   if ( status == "on" ) {
-    //newFanStatus will be copied to fanStatus moments after in function updateTargetTemp()
+    //newFanStatus will be copied to fanStatus moments after in function updateFanStatus()
     // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
     newFanStatus = true;
     //start timer to debounce this new setting
@@ -380,7 +397,7 @@ int setFanStatus(String status)
     return 0;
   }
   if ( status == "off" ) {
-    //newFanStatus will be copied to fanStatus moments after in function updateTargetTemp()
+    //newFanStatus will be copied to fanStatus moments after in function updateFanStatus()
     // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
     newFanStatus = false;
     //start timer to debounce this new setting
@@ -422,6 +439,70 @@ void updateFanStatus()
 
 }
 
+/*******************************************************************************
+ * Function Name  : setPulseStatus
+ * Description    : sets the pulse on or off
+ * Behavior       : the new setting will not take place right away, but moments after
+                    since a timer is triggered. This is to debounce the setting and
+                    allow the users to change their mind
+ * Return         : 0 if all is good, or -1 if the parameter does not match on or off
+ *******************************************************************************/
+int setPulseStatus(String status)
+{
+  //update only in the case the FSM state is idleState or pulseState
+  if ( not ( thermostatStateMachine.isInState(idleState) or thermostatStateMachine.isInState(pulseState) ) ) {
+    Particle.publish(PUSHBULLET_NOTIF_HOME, "ERROR: Cannot set pulse while heating" + getTime(), 60, PRIVATE);
+    return -1;
+  }
+
+  //update only in the case the status is on or off
+  if ( status == "on" ) {
+    //newPulseStatus will be copied to pulseStatus moments after in function updatePulseStatus()
+    // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
+    newPulseStatus = true;
+    //start timer to debounce this new setting
+    setNewPulseStatusTimer = 0;
+    return 0;
+  }
+  if ( status == "off" ) {
+    //newPulseStatus will be copied to pulseStatus moments after in function updatePulseStatus()
+    // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
+    newPulseStatus = false;
+    //start timer to debounce this new setting
+    setNewPulseStatusTimer = 0;
+    return 0;
+  }
+
+  Particle.publish(APP_NAME, "ERROR: Failed to set pulse status to " + status, 60, PRIVATE);
+  return -1;
+}
+
+/*******************************************************************************
+ * Function Name  : updatePulseStatus
+ * Description    : updates the status of the pulse of the thermostat
+                    moments after it was set with setPulseStatus
+ * Return         : none
+ *******************************************************************************/
+void updatePulseStatus()
+{
+  //debounce the new setting
+  if (setNewPulseStatusTimer < DEBOUNCE_SETTINGS) {
+    return;
+  }
+  //is there anything to update?
+  if (pulseStatus == newPulseStatus) {
+    return;
+  }
+
+  //update the pulse status only in the case the status is on or off
+  if (newPulseStatus) {
+    newPulseStatus = false;
+    pulseStatus = true;
+  } else {
+    pulseStatus = false;
+  }
+
+}
 
 /*******************************************************************************
  * Function Name  : readTemperature
@@ -591,6 +672,13 @@ void idleUpdateFunction(){
     //Particle.publish(APP_NAME, "Starting to heat", 60, PRIVATE);
     thermostatStateMachine.transitionTo(heatingState);
   }
+
+  //if the thermostat is idle and a pulse was triggered, then transition to
+  // the pulseState
+  if ( pulseStatus ) {
+    thermostatStateMachine.transitionTo(pulseState);
+  }
+
 }
 void idleExitFunction(){
   //Particle.publish(APP_NAME, "idleExitFunction", 60, PRIVATE);
@@ -625,6 +713,62 @@ void heatingExitFunction(){
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, LOW);
+}
+
+/*******************************************************************************
+ * FSM state Name : pulse
+ * Description    : turns the HVAC on for a certain time
+                    comes in handy when you want to warm up/cool down the house a little bit
+ *******************************************************************************/
+void pulseEnterFunction(){
+  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse on" + getTime(), 60, PRIVATE);
+  myDigitalWrite(fan, HIGH);
+  myDigitalWrite(heat, HIGH);
+  myDigitalWrite(cool, LOW);
+
+  //start the timer of this cycle
+  pulseTimer = 0;
+
+  //start the minimum timer of this cycle
+  minimumOnTimer = 0;
+
+  if (USE_BLYNK == "yes") {
+    pulseLed.on();
+  }
+
+}
+void pulseUpdateFunction(){
+  //is minimum time up?
+  if (minimumOnTimer < MINIMUM_ON_TIMEOUT) {
+    //not yet, so get out of here
+    return;
+  }
+
+  //if the pulse was canceled by the user, then transition to
+  // the idleState
+  if (not pulseStatus) {
+    thermostatStateMachine.transitionTo(idleState);
+  }
+
+  //is the time up for the pulse?
+  if (pulseTimer < PULSE_TIMEOUT) {
+    //not yet, so get out of here
+    return;
+  }
+
+  thermostatStateMachine.transitionTo(idleState);
+}
+void pulseExitFunction(){
+  pulseStatus = false;
+  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse off" + getTime(), 60, PRIVATE);
+  myDigitalWrite(fan, LOW);
+  myDigitalWrite(heat, LOW);
+  myDigitalWrite(cool, LOW);
+
+  if (USE_BLYNK == "yes") {
+    pulseLed.off();
+  }
+
 }
 
 /*******************************************************************************
@@ -717,9 +861,12 @@ void myDigitalWrite(int input, int status){
 
   if (input == heat){
     heatOutput = status;
+    BLYNK_setHeatLed(status);
   }
+
   if (input == cool){
     coolOutput = status;
+    BLYNK_setCoolLed(status);
   }
 }
 
@@ -751,7 +898,15 @@ BLYNK_READ(V3) {
   } else {
     fanStatusLed.off();
   }
-  //Blynk.virtualWrite(V3, fanStatus);
+}
+BLYNK_READ(V6) {
+  //this is a blynk led
+  // source: http://docs.blynk.cc/#widgets-displays-led
+  if ( pulseStatus ) {
+    pulseLed.on();
+  } else {
+    pulseLed.off();
+  }
 }
 
 BLYNK_WRITE(V10) {
@@ -772,6 +927,19 @@ BLYNK_WRITE(V11) {
     }
   }
 }
+BLYNK_WRITE(V12) {
+  //flip pulse status, if it's on switch it off and viceversa
+  // do this only when blynk sends a 1
+  // background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
+  // source: http://docs.blynk.cc/#widgets-controllers-button
+  if ( param.asInt() == 1 ) {
+    if ( pulseStatus ){
+      setPulseStatus("off");
+    } else {
+      setPulseStatus("on");
+    }
+  }
+}
 
 void BLYNK_setFanStatus(int status) {
   if (USE_BLYNK == "yes") {
@@ -783,11 +951,35 @@ void BLYNK_setFanStatus(int status) {
   }
 }
 
+void BLYNK_setHeatLed(int status) {
+  if (USE_BLYNK == "yes") {
+    if ( status ) {
+      heatLed.on();
+    } else {
+      heatLed.off();
+    }
+  }
+}
+
+void BLYNK_setCoolLed(int status) {
+  if (USE_BLYNK == "yes") {
+    if ( status ) {
+      coolLed.on();
+    } else {
+      coolLed.off();
+    }
+  }
+}
+
 BLYNK_CONNECTED() {
   Blynk.syncVirtual(V0);
   Blynk.syncVirtual(V1);
   Blynk.syncVirtual(V2);
   Blynk.syncVirtual(V3);
+  Blynk.syncVirtual(V4);
+  Blynk.syncVirtual(V5);
+  Blynk.syncVirtual(V6);
+  Blynk.syncVirtual(V7);
 }
 
 
