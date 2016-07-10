@@ -28,7 +28,7 @@
 #include "blynkAuthToken.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.19";
+String VERSION = "Version 0.21";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -79,13 +79,25 @@ String VERSION = "Version 0.19";
            * updates in the fan control, making UI more responsive to user changes
            * add cooling support
            * pulses now are able to cool the house
+ * changes in version 0.20:
+           * create a state variable (idle, heating, cooling, off, fan on)
+           * trying to fix bug where in init both cool and heat leads remain on until idle state is triggered
+           * set the debounce timer to double the default for mode changes
+ * changes in version 0.21:
+           * store settings in eeprom
+           * changing defaults to HVAC OFF (from HEATING)
+           * updating the blynk cloud periodically
+           * added in the blynk app the state of the thermostat (also published in the particle cloud)
+           * here is the link for cloning the blynk app http://tinyurl.com/zq9lcef
 
 TODO:
   * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
               source for discussion: https://community.particle.io/t/the-minimalist-thermostat/19436
               source for docs: https://docs.particle.io/reference/firmware/photon/#system-thread
-  * store settings in eeprom
-  * create a state variable (idle, heating, cooling, off, fan on)
+  * set max time for heating or cooling in 5 hours (alarm) or 6 hours (auto-shut-off)
+  * #define STATE_FAN_ON "Fan On" -> the fan status should show up in the status
+  * refloat BLYNK_CONNECTED()?
+  * the fan goes off few seconds after the cooling is on
 
 *******************************************************************************/
 
@@ -178,8 +190,8 @@ float currentHumidity = 0.0;
 // a larger value will reduce the number of times the HVAC comes on but will leave it on a longer time
 float margin = 0.25;
 
-//DHT difference with real temperature (if none set to zero)
-//use this variable to fix DHT measurements with your existing thermostat
+//sensor difference with real temperature (if none set to zero)
+//use this variable to align measurements with your existing thermostat
 float temperatureCalibration = -1.35;
 
 //temperature related variables - to be exposed in the cloud
@@ -187,7 +199,8 @@ String targetTempString = String(targetTemp); //String to store the target temp 
 String currentTempString = String(currentTemp); //String to store the sensor's temp so it can be exposed
 String currentHumidityString = String(currentHumidity); //String to store the sensor's humidity so it can be exposed
 
-#define DEBOUNCE_SETTINGS 3000
+#define DEBOUNCE_SETTINGS 4000
+#define DEBOUNCE_SETTINGS_MODE 8000 //give more time to the MODE change
 float newTargetTemp = 19.0;
 elapsedMillis setNewTargetTempTimer;
 
@@ -203,12 +216,23 @@ elapsedMillis pulseButtonClickTimer;
 
 //here are the possible modes the thermostat can be in: off/heat/cool
 #define MODE_OFF "Off"
-#define MODE_HEAT "Heating"
-#define MODE_COOL "Cooling"
-String externalMode = MODE_HEAT;
-String internalMode = MODE_HEAT;
+#define MODE_HEAT "Winter"
+#define MODE_COOL "Summer"
+String externalMode = MODE_OFF;
+String internalMode = MODE_OFF;
 bool modeButtonClick = false;
 elapsedMillis modeButtonClickTimer;
+
+//here are the possible states of the thermostat
+#define STATE_INIT "Initializing"
+#define STATE_IDLE "Idle"
+#define STATE_HEATING "Heating"
+#define STATE_COOLING "Cooling"
+#define STATE_FAN_ON "Fan On"
+#define STATE_OFF "Off"
+#define STATE_PULSE_HEAT "Pulse Heat"
+#define STATE_PULSE_COOL "Pulse Cool"
+String state = STATE_INIT;
 
 //TESTING_HACK
 // this allows me to system test the project
@@ -241,7 +265,14 @@ char auth[] = BLYNK_AUTH_TOKEN;
 #define BLYNK_BUTTON_MODE V8
 #define BLYNK_LED_PULSE V6
 #define BLYNK_BUTTON_PULSE V12
+#define BLYNK_DISPLAY_STATE V13
 
+//this is the remote temperature sensor
+#define BLYNK_DISPLAY_CURRENT_TEMP_UPSTAIRS V9
+
+//this defines how often the readings are sent to the blynk cloud (millisecs)
+#define BLYNK_STORE_INTERVAL 5000
+elapsedMillis blynkStoreInterval;
 
 WidgetLED fanLed(BLYNK_LED_FAN); //register led to virtual pin 3
 WidgetLED heatLed(BLYNK_LED_HEAT); //register led to virtual pin 4
@@ -251,6 +282,28 @@ WidgetLED pulseLed(BLYNK_LED_PULSE); //register led to virtual pin 6
 //enable the user code (our program below) to run in parallel with cloud connectivity code
 // source: https://docs.particle.io/reference/firmware/photon/#system-thread
 //SYSTEM_THREAD(ENABLED);
+
+/*******************************************************************************
+ structure for writing thresholds in eeprom
+ https://docs.particle.io/reference/firmware/photon/#eeprom
+*******************************************************************************/
+//randomly chosen value here. The only thing that matters is that it's not 255
+// since 255 is the default value for uninitialized eeprom
+// I used 137 in version 0.21 already
+#define EEPROM_VERSION 138
+#define EEPROM_ADDRESS 0
+
+struct EepromMemoryStructure {
+  uint8_t version = EEPROM_VERSION;
+  float targetTemp;
+  uint8_t internalFan;
+  uint8_t internalMode;
+};
+EepromMemoryStructure eepromMemory;
+
+bool settingsHaveChanged = false;
+elapsedMillis settingsHaveChanged_timer;
+#define SAVE_SETTINGS_INTERVAL 10000
 
 /*******************************************************************************
  * Function Name  : setup
@@ -282,6 +335,9 @@ void setup() {
     Particle.publish(APP_NAME, "ERROR: Failed to register variable humidity", 60, PRIVATE);
   }
   if (Particle.variable("mode", externalMode)==false) {
+    Particle.publish(APP_NAME, "ERROR: Failed to register variable mode", 60, PRIVATE);
+  }
+  if (Particle.variable("state", state)==false) {
     Particle.publish(APP_NAME, "ERROR: Failed to register variable mode", 60, PRIVATE);
   }
 
@@ -319,6 +375,9 @@ void setup() {
     temperatureSamples[i] = DUMMY;
   }
 
+  //restore settings from eeprom, if there were any saved before
+  readFromEeprom();
+
 }
 
 // This wrapper is in charge of calling the DHT sensor lib
@@ -347,6 +406,13 @@ void loop() {
   //this function updates the FSM
   // the FSM is the heart of the thermostat - all actions are defined by its states
   thermostatStateMachine.update();
+
+  //publish readings to the blynk server every minute so the History Graph gets updated
+  // even when the blynk app is not on (running) in the users phone
+  updateBlynkCloud();
+
+  //every now and then we save the settings
+  saveSettings();
 
 }
 
@@ -504,7 +570,7 @@ void updateMode()
   }
 
   //debounce the new setting
-  if (modeButtonClickTimer < DEBOUNCE_SETTINGS) {
+  if (modeButtonClickTimer < DEBOUNCE_SETTINGS_MODE ) {
     return;
   }
 
@@ -629,7 +695,7 @@ int publishTemperature( float temperature, float humidity ) {
   currentHumidityString = String(currentHumidityChar);
 
   //publish readings
-  Particle.publish(APP_NAME, "Home: " + currentTempString + "°C " + currentHumidityString + "%", 60, PRIVATE);
+  Particle.publish(APP_NAME, currentTempString + "°C " + currentHumidityString + "%", 60, PRIVATE);
 
   return 0;
 }
@@ -645,6 +711,8 @@ int publishTemperature( float temperature, float humidity ) {
 void initEnterFunction(){
   //start the timer of this cycle
   initTimer = 0;
+  //set the state
+  setState(STATE_INIT);
 }
 void initUpdateFunction(){
   //time is up?
@@ -657,6 +725,9 @@ void initExitFunction(){
 }
 
 void idleEnterFunction(){
+  //set the state
+  setState(STATE_IDLE);
+
   //turn off the fan only if fan was not set on manually by the user
   if ( internalFan == false ) {
     myDigitalWrite(fan, LOW);
@@ -720,6 +791,9 @@ void idleExitFunction(){
 }
 
 void heatingEnterFunction(){
+  //set the state
+  setState(STATE_HEATING);
+
   Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat on" + getTime(), 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, HIGH);
@@ -764,10 +838,14 @@ void pulseEnterFunction(){
     myDigitalWrite(fan, HIGH);
     myDigitalWrite(heat, HIGH);
     myDigitalWrite(cool, LOW);
+    //set the state
+    setState(STATE_PULSE_HEAT);
   } else if ( internalMode == MODE_COOL ){
     myDigitalWrite(fan, HIGH);
     myDigitalWrite(heat, LOW);
     myDigitalWrite(cool, HIGH);
+    //set the state
+    setState(STATE_PULSE_COOL);
   }
   //start the timer of this cycle
   pulseTimer = 0;
@@ -811,6 +889,9 @@ void pulseExitFunction(){
  * Description    : turns the cooling element on until the desired temperature is reached
  *******************************************************************************/
 void coolingEnterFunction(){
+  //set the state
+  setState(STATE_COOLING);
+
   Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool on" + getTime(), 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, LOW);
@@ -943,11 +1024,40 @@ void myDigitalWrite(int input, int status){
   }
 }
 
+/*******************************************************************************
+ * Function Name  : getTime
+ * Description    : returns the time in the following format: 14:42:31
+                    TIME_FORMAT_ISO8601_FULL example: 2016-03-23T14:42:31-04:00
+ * Return         : the time
+ *******************************************************************************/
+String getTime() {
+  String timeNow = Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL);
+  timeNow = timeNow.substring(11, timeNow.length()-6);
+  return " " + timeNow;
+}
+
+/*******************************************************************************
+ * Function Name  : setState
+ * Description    : sets the state of the system
+ * Return         : none
+ *******************************************************************************/
+void setState(String newState) {
+  state = newState;
+  Blynk.virtualWrite(BLYNK_DISPLAY_STATE, state);
+}
+
 /*******************************************************************************/
 /*******************************************************************************/
+/*******************          BLYNK FUNCTIONS         **************************/
 /*******************************************************************************/
 /*******************************************************************************/
-/*******************************************************************************/
+
+/*******************************************************************************
+ * Function Name  : BLYNK_READ
+ * Description    : these functions are called by blynk when the blynk app wants
+                     to read values from the photon
+                    source: http://docs.blynk.cc/#blynk-main-operations-get-data-from-hardware
+ *******************************************************************************/
 BLYNK_READ(BLYNK_DISPLAY_CURRENT_TEMP) {
   //this is a blynk value display
   // source: http://docs.blynk.cc/#widgets-displays-value-display
@@ -981,17 +1091,44 @@ BLYNK_READ(BLYNK_LED_PULSE) {
     pulseLed.off();
   }
 }
+BLYNK_READ(BLYNK_LED_HEAT) {
+  //this is a blynk led
+  // source: http://docs.blynk.cc/#widgets-displays-led
+  if ( heatOutput ) {
+    heatLed.on();
+  } else {
+    heatLed.off();
+  }
+}
+BLYNK_READ(BLYNK_LED_COOL) {
+  //this is a blynk led
+  // source: http://docs.blynk.cc/#widgets-displays-led
+  if ( coolOutput ) {
+    coolLed.on();
+  } else {
+    coolLed.off();
+  }
+}
 BLYNK_READ(BLYNK_DISPLAY_MODE) {
-  //this is a blynk value display
-  // source: http://docs.blynk.cc/#widgets-displays-value-display
   Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
 }
+BLYNK_READ(BLYNK_DISPLAY_STATE) {
+  Blynk.virtualWrite(BLYNK_DISPLAY_STATE, state);
+}
 
+/*******************************************************************************
+ * Function Name  : BLYNK_WRITE
+ * Description    : these functions are called by blynk when the blynk app wants
+                     to write values to the photon
+                    source: http://docs.blynk.cc/#blynk-main-operations-send-data-from-app-to-hardware
+ *******************************************************************************/
 BLYNK_WRITE(BLYNK_SLIDER_TEMP) {
   //this is the blynk slider
   // source: http://docs.blynk.cc/#widgets-controllers-slider
   setTargetTemp(param.asStr());
+  flagSettingsHaveChanged();
 }
+
 BLYNK_WRITE(BLYNK_BUTTON_FAN) {
   //flip fan status, if it's on switch it off and viceversa
   // do this only when blynk sends a 1
@@ -1009,8 +1146,11 @@ BLYNK_WRITE(BLYNK_BUTTON_FAN) {
     } else {
       fanLed.off();
     }
+
+    flagSettingsHaveChanged();
   }
 }
+
 BLYNK_WRITE(BLYNK_BUTTON_PULSE) {
   //flip pulse status, if it's on switch it off and viceversa
   // do this only when blynk sends a 1
@@ -1030,6 +1170,7 @@ BLYNK_WRITE(BLYNK_BUTTON_PULSE) {
     }
   }
 }
+
 BLYNK_WRITE(BLYNK_BUTTON_MODE) {
   //mode: cycle through off->heating->cooling
   // do this only when blynk sends a 1
@@ -1042,16 +1183,27 @@ BLYNK_WRITE(BLYNK_BUTTON_MODE) {
       externalMode = MODE_COOL;
     } else if ( externalMode == MODE_COOL ){
       externalMode = MODE_OFF;
+    } else {
+      externalMode = MODE_OFF;
     }
+
     //start timer to debounce this new setting
     modeButtonClickTimer = 0;
     //flag that the button was clicked
     modeButtonClick = true;
     //update the mode indicator
     Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
+
+    flagSettingsHaveChanged();
   }
 }
 
+/*******************************************************************************
+ * Function Name  : BLYNK_setXxxLed
+ * Description    : these functions are called by our program to update the status
+                    of the leds in the blynk cloud and the blynk app
+                    source: http://docs.blynk.cc/#blynk-main-operations-send-data-from-app-to-hardware
+*******************************************************************************/
 void BLYNK_setFanLed(int status) {
   if (USE_BLYNK == "yes") {
     if ( status ) {
@@ -1082,24 +1234,202 @@ void BLYNK_setCoolLed(int status) {
   }
 }
 
-BLYNK_CONNECTED() {
-  Blynk.syncVirtual(BLYNK_DISPLAY_CURRENT_TEMP);
-  Blynk.syncVirtual(BLYNK_DISPLAY_HUMIDITY);
-  Blynk.syncVirtual(BLYNK_DISPLAY_TARGET_TEMP);
-  Blynk.syncVirtual(BLYNK_LED_FAN);
-  Blynk.syncVirtual(BLYNK_LED_HEAT);
-  Blynk.syncVirtual(BLYNK_LED_COOL);
-  Blynk.syncVirtual(BLYNK_LED_PULSE);
-  Blynk.syncVirtual(BLYNK_DISPLAY_MODE);
-  BLYNK_setFanLed(fan);
-  BLYNK_setHeatLed(heat);
-  BLYNK_setCoolLed(cool);
+// BLYNK_CONNECTED() {
+//   Blynk.syncVirtual(BLYNK_DISPLAY_CURRENT_TEMP);
+//   Blynk.syncVirtual(BLYNK_DISPLAY_HUMIDITY);
+//   Blynk.syncVirtual(BLYNK_DISPLAY_TARGET_TEMP);
+//   Blynk.syncVirtual(BLYNK_LED_FAN);
+//   Blynk.syncVirtual(BLYNK_LED_HEAT);
+//   Blynk.syncVirtual(BLYNK_LED_COOL);
+//   Blynk.syncVirtual(BLYNK_LED_PULSE);
+//   Blynk.syncVirtual(BLYNK_DISPLAY_MODE);
+//   // BLYNK_setFanLed(fan);
+//   // BLYNK_setHeatLed(heat);
+//   // BLYNK_setCoolLed(cool);
+//
+//   //update the mode and state indicator
+//   Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
+//   Blynk.virtualWrite(BLYNK_DISPLAY_STATE, state);
+// }
+
+/*******************************************************************************
+ * Function Name  : updateBlynkCloud
+ * Description    : publish readings to the blynk server every minute so the
+                    History Graph gets updated even when
+                    the blynk app is not on (running) in the users phone
+ * Return         : none
+ *******************************************************************************/
+void updateBlynkCloud() {
+
+  //is it time to store in the blynk cloud? if so, do it
+  if ( (USE_BLYNK == "yes") and (blynkStoreInterval > BLYNK_STORE_INTERVAL) ) {
+
+    //reset timer
+    blynkStoreInterval = 0;
+
+    //do not write the temp while the thermostat is initializing
+    if ( not thermostatStateMachine.isInState(initState) ) {
+      Blynk.virtualWrite(BLYNK_DISPLAY_CURRENT_TEMP, currentTemp);
+      Blynk.virtualWrite(BLYNK_DISPLAY_HUMIDITY, currentHumidity);
+    }
+
+    Blynk.virtualWrite(BLYNK_DISPLAY_TARGET_TEMP, targetTemp);
+
+    if ( externalPulse ) {
+      pulseLed.on();
+    } else {
+      pulseLed.off();
+    }
+
+    BLYNK_setFanLed(externalFan);
+    BLYNK_setHeatLed(heatOutput);
+    BLYNK_setCoolLed(coolOutput);
+
+    //update the mode and state indicator
+    Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
+    Blynk.virtualWrite(BLYNK_DISPLAY_STATE, state);
+
+  }
+
 }
 
+/*******************************************************************************/
+/*******************************************************************************/
+/*******************          EEPROM FUNCTIONS         *************************/
+/********  https://docs.particle.io/reference/firmware/photon/#eeprom  *********/
+/*******************************************************************************/
+/*******************************************************************************/
 
-//example: Heat on @2016-03-23T14:42:31-04:00
-String getTime() {
-  String timeNow = Time.format(Time.now(), TIME_FORMAT_ISO8601_FULL);
-  timeNow = timeNow.substring(11, timeNow.length()-6);
-  return " " + timeNow;
+/*******************************************************************************
+ * Function Name  : flagSettingsHaveChanged
+ * Description    : this function gets called when the user of the blynk app
+                    changes a setting. The blynk app calls the blynk cloud and in turn
+                    it calls the functions BLYNK_WRITE()
+ * Return         : none
+ *******************************************************************************/
+void flagSettingsHaveChanged()
+{
+  settingsHaveChanged = true;
+  settingsHaveChanged_timer = 0;
+
+}
+
+/*******************************************************************************
+ * Function Name  : readFromEeprom
+ * Description    : retrieves the settings from the EEPROM memory
+ * Return         : none
+ *******************************************************************************/
+void readFromEeprom()
+{
+
+  EepromMemoryStructure myObj;
+  EEPROM.get(EEPROM_ADDRESS, myObj);
+
+  //verify this eeprom was written before
+  // if version is 255 it means the eeprom was never written in the first place, hence the
+  // data just read with the previous EEPROM.get() is invalid and we will ignore it
+  if ( myObj.version == EEPROM_VERSION ) {
+
+    targetTemp = myObj.targetTemp;
+    newTargetTemp = targetTemp;
+
+    internalMode = convertIntToMode( myObj.internalMode );
+    externalMode = internalMode;
+
+    //these variables are false at boot
+    if ( myObj.internalFan == 1 ) {
+      internalFan = true;
+      externalFan = true;
+    }
+
+    // Particle.publish(APP_NAME, "DEBUG: read settings from EEPROM: " + String(myObj.targetTemp)
+    Particle.publish(APP_NAME, "read:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp), 60, PRIVATE);
+
+  }
+
+}
+
+/*******************************************************************************
+ * Function Name  : saveSettings
+ * Description    : in this function we wait a bit to give the user time
+                    to adjust the right value for them and in this way we try not
+                    to save in EEPROM at every little change.
+                    Remember that each eeprom writing cycle is a precious and finite resource
+ * Return         : none
+ *******************************************************************************/
+void saveSettings() {
+
+  //if the thermostat is initializing, get out of here
+  if ( thermostatStateMachine.isInState(initState) ) {
+    return;
+  }
+
+  //if no settings were changed, get out of here
+  if (not settingsHaveChanged) {
+    return;
+  }
+
+  //if settings have changed, is it time to store them?
+  if (settingsHaveChanged_timer < SAVE_SETTINGS_INTERVAL) {
+    return;
+  }
+
+  //reset timer
+  settingsHaveChanged_timer = 0;
+  settingsHaveChanged = false;
+
+  //store thresholds in the struct type that will be saved in the eeprom
+  eepromMemory.version = EEPROM_VERSION;
+  eepromMemory.targetTemp = targetTemp;
+  eepromMemory.internalMode = convertModeToInt(internalMode);
+
+  eepromMemory.internalFan = 0;
+  if ( internalFan ) {
+    eepromMemory.internalFan = 1;
+  }
+
+  //then save
+  EEPROM.put(EEPROM_ADDRESS, eepromMemory);
+
+  // Particle.publish(APP_NAME, "stored:" + eepromMemory.internalMode + "-" + String(eepromMemory.internalFan) + "-" + String(eepromMemory.targetTemp) , 60, PRIVATE);
+  Particle.publish(APP_NAME, "stored:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp), 60, PRIVATE);
+
+}
+
+/*******************************************************************************
+ * Function Name  : convertIntToMode
+ * Description    : converts the int mode (saved in the eeprom) into the String mode
+ * Return         : String
+ *******************************************************************************/
+String convertIntToMode( uint8_t mode )
+{
+  if ( mode == 1 ){
+    return MODE_HEAT;
+  }
+  if ( mode == 2 ){
+    return MODE_COOL;
+  }
+
+  //in all other cases
+  return MODE_OFF;
+
+}
+
+/*******************************************************************************
+ * Function Name  : convertModeToInt
+ * Description    : converts the String mode into the int mode (to be saved in the eeprom)
+ * Return         : String
+ *******************************************************************************/
+uint8_t convertModeToInt( String mode )
+{
+  if ( mode == MODE_HEAT ){
+    return 1;
+  }
+  if ( mode == MODE_COOL ){
+    return 2;
+  }
+
+  //in all other cases
+  return 0;
+
 }
