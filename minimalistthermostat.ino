@@ -89,6 +89,9 @@ String VERSION = "Version 0.21";
            * updating the blynk cloud periodically
            * added in the blynk app the state of the thermostat (also published in the particle cloud)
            * here is the link for cloning the blynk app http://tinyurl.com/zq9lcef
+           * changed all eeprom values to uint8_t to save space and bytes written
+             this saves eeprom pages to be written more often than needed
+             (for instance a float takes 4 bytes and an uint8_t takes only 1)
 
 TODO:
   * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
@@ -289,13 +292,13 @@ WidgetLED pulseLed(BLYNK_LED_PULSE); //register led to virtual pin 6
 *******************************************************************************/
 //randomly chosen value here. The only thing that matters is that it's not 255
 // since 255 is the default value for uninitialized eeprom
-// I used 137 in version 0.21 already
-#define EEPROM_VERSION 138
+// I used 137 and 138 in version 0.21 already
+#define EEPROM_VERSION 139
 #define EEPROM_ADDRESS 0
 
 struct EepromMemoryStructure {
   uint8_t version = EEPROM_VERSION;
-  float targetTemp;
+  uint8_t targetTemp;
   uint8_t internalFan;
   uint8_t internalMode;
 };
@@ -1330,7 +1333,7 @@ void readFromEeprom()
   // data just read with the previous EEPROM.get() is invalid and we will ignore it
   if ( myObj.version == EEPROM_VERSION ) {
 
-    targetTemp = myObj.targetTemp;
+    targetTemp = float( myObj.targetTemp );
     newTargetTemp = targetTemp;
 
     internalMode = convertIntToMode( myObj.internalMode );
@@ -1380,7 +1383,7 @@ void saveSettings() {
 
   //store thresholds in the struct type that will be saved in the eeprom
   eepromMemory.version = EEPROM_VERSION;
-  eepromMemory.targetTemp = targetTemp;
+  eepromMemory.targetTemp = uint8_t(targetTemp);
   eepromMemory.internalMode = convertModeToInt(internalMode);
 
   eepromMemory.internalFan = 0;
