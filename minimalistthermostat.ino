@@ -28,7 +28,7 @@
 #include "blynkAuthToken.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.21";
+String VERSION = "Version 0.24";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -92,6 +92,13 @@ String VERSION = "Version 0.21";
            * changed all eeprom values to uint8_t to save space and bytes written
              this saves eeprom pages to be written more often than needed
              (for instance a float takes 4 bytes and an uint8_t takes only 1)
+ * changes in version 0.22:
+           * fixed an issue with targetTempString, when rebooting the photon would not show the
+             temperature loaded from the eeprom
+ * changes in version 0.23:
+              * Changing pushbullet notifications on garage activity for google sheets
+ * changes in version 0.24:
+              * Reverting to Heating/Cooling from Winter/Summer modes
 
 TODO:
   * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
@@ -219,8 +226,8 @@ elapsedMillis pulseButtonClickTimer;
 
 //here are the possible modes the thermostat can be in: off/heat/cool
 #define MODE_OFF "Off"
-#define MODE_HEAT "Winter"
-#define MODE_COOL "Summer"
+#define MODE_HEAT "Heating"
+#define MODE_COOL "Cooling"
 String externalMode = MODE_OFF;
 String internalMode = MODE_OFF;
 bool modeButtonClick = false;
@@ -449,7 +456,9 @@ int setTargetTemp(String temp)
 
   //if the execution reaches here then the value was invalid
   //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
-  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
+//  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
+  String tempStatus = "ERROR: Failed to set new target temp to " + temp + getTime();
+  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
   return -1;
 }
 
@@ -471,14 +480,29 @@ void updateTargetTemp()
   }
 
   targetTemp = newTargetTemp;
-  targetTempString = String(targetTemp);
-
-  //show only 2 decimals in notifications
-  // Example: show 19.00 instead of 19.000000
-  targetTempString = targetTempString.substring(0, targetTempString.length()-4);
+  targetTempString = float2string(targetTemp);
 
   //Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
-  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New target temp: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
+  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New target temp: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
+  String tempStatus = "New target temp: " + targetTempString + "°C" + getTime();
+  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+}
+
+/*******************************************************************************
+ * Function Name  : float2string
+ * Description    : return the string representation of the float number
+                     passed as parameter with 2 decimals
+ * Return         : the string
+ *******************************************************************************/
+String float2string( float floatNumber )
+{
+  String stringNumber = String(floatNumber);
+
+  //return only 2 decimals
+  // Example: show 19.00 instead of 19.000000
+  stringNumber = stringNumber.substring(0, stringNumber.length()-4);
+
+  return stringNumber;
 }
 
 /*******************************************************************************
@@ -511,9 +535,13 @@ void updateFanStatus()
   internalFan = externalFan;
 
   if ( internalFan ) {
-    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan on" + getTime(), 60, PRIVATE);
+    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan on" + getTime(), 60, PRIVATE);
+    String tempStatus = "Fan on" + getTime();
+    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
   } else {
-    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan off" + getTime(), 60, PRIVATE);
+    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan off" + getTime(), 60, PRIVATE);
+    String tempStatus = "Fan off" + getTime();
+    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
   }
 }
 
@@ -588,7 +616,9 @@ void updateMode()
 
   //update the new mode from the external to the internal variable
   internalMode = externalMode;
-  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Mode set to " + internalMode + getTime(), 60, PRIVATE);
+  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Mode set to " + internalMode + getTime(), 60, PRIVATE);
+  String tempStatus = "Mode set to " + internalMode + getTime();
+  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
 
 }
 
@@ -797,7 +827,9 @@ void heatingEnterFunction(){
   //set the state
   setState(STATE_HEATING);
 
-  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat on" + getTime(), 60, PRIVATE);
+  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat on" + getTime(), 60, PRIVATE);
+  String tempStatus = "Heat on" + getTime();
+  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, HIGH);
   myDigitalWrite(cool, LOW);
@@ -813,7 +845,9 @@ void heatingUpdateFunction(){
   }
 
   if ( currentTemp >= (targetTemp + margin) ) {
-    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
+    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
+    String tempStatus = "Desired temperature reached: " + targetTempString + "°C" + getTime();
+    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
     thermostatStateMachine.transitionTo(idleState);
   }
 
@@ -824,7 +858,9 @@ void heatingUpdateFunction(){
 
 }
 void heatingExitFunction(){
-  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat off" + getTime(), 60, PRIVATE);
+  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat off" + getTime(), 60, PRIVATE);
+  String tempStatus = "Heat off" + getTime();
+  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, LOW);
@@ -836,7 +872,9 @@ void heatingExitFunction(){
                     comes in handy when you want to warm up/cool down the house a little bit
  *******************************************************************************/
 void pulseEnterFunction(){
-  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse on" + getTime(), 60, PRIVATE);
+  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse on" + getTime(), 60, PRIVATE);
+  String tempStatus = "Pulse on" + getTime();
+  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
   if ( internalMode == MODE_HEAT ){
     myDigitalWrite(fan, HIGH);
     myDigitalWrite(heat, HIGH);
@@ -876,7 +914,9 @@ void pulseUpdateFunction(){
 }
 void pulseExitFunction(){
   internalPulse = false;
-  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse off" + getTime(), 60, PRIVATE);
+  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse off" + getTime(), 60, PRIVATE);
+  String tempStatus = "Pulse off" + getTime();
+  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, LOW);
@@ -895,7 +935,9 @@ void coolingEnterFunction(){
   //set the state
   setState(STATE_COOLING);
 
-  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool on" + getTime(), 60, PRIVATE);
+  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool on" + getTime(), 60, PRIVATE);
+  String tempStatus = "Cool on" + getTime();
+  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, HIGH);
@@ -911,7 +953,9 @@ void coolingUpdateFunction(){
   }
 
   if ( currentTemp <= (targetTemp - margin) ) {
-    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
+    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
+    String tempStatus = "Desired temperature reached: " + targetTempString + "°C" + getTime();
+    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
     thermostatStateMachine.transitionTo(idleState);
   }
 
@@ -922,7 +966,9 @@ void coolingUpdateFunction(){
 
  }
  void coolingExitFunction(){
-  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool off" + getTime(), 60, PRIVATE);
+  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool off" + getTime(), 60, PRIVATE);
+  String tempStatus = "Cool off" + getTime();
+  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, LOW);
@@ -991,7 +1037,9 @@ int setCurrentTemp(String newCurrentTemp)
     currentTempString = currentTempString.substring(0, currentTempString.length()-4);
 
     //Particle.publish(APP_NAME, "New current temp: " + currentTempString, 60, PRIVATE);
-    Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New current temp: " + currentTempString + getTime(), 60, PRIVATE);
+    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New current temp: " + currentTempString + getTime(), 60, PRIVATE);
+    String tempStatus = "New current temp: " + currentTempString + getTime();
+    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
     return 0;
   } else {
     //Particle.publish(APP_NAME, "ERROR: Failed to set new current temp to " + newCurrentTemp, 60, PRIVATE);
@@ -1335,6 +1383,7 @@ void readFromEeprom()
 
     targetTemp = float( myObj.targetTemp );
     newTargetTemp = targetTemp;
+    targetTempString = float2string(targetTemp);
 
     internalMode = convertIntToMode( myObj.internalMode );
     externalMode = internalMode;
