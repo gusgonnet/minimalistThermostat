@@ -96,10 +96,10 @@ String VERSION = "Version 0.24";
            * fixed an issue with targetTempString, when rebooting the photon would not show the
              temperature loaded from the eeprom
  * changes in version 0.23:
-              * Swapped pushbullet notifications with google sheets on thermostat activity
+           * Swapped pushbullet notifications with google sheets on thermostat activity
                  source: https://www.hackster.io/gusgonnet/pushing-data-to-google-docs-02f9c4
  * changes in version 0.24:
-              * Reverting to Heating/Cooling from Winter/Summer modes
+           * Reverting to Heating/Cooling from Winter/Summer modes
 
 TODO:
   * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
