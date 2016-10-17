@@ -159,9 +159,9 @@ elapsedMillis pulseTimer;
 // D4 : DHT22
 // D3, D5~D7 : unused
 // A0~A7 : unused
-int fan = D0;
-int heat = D1;
-int cool = D2;
+int fan = D1;
+int heat = D2;
+int cool = D3;
 //TESTING_HACK
 int fanOutput;
 int heatOutput;
