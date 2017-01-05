@@ -28,7 +28,7 @@
 #include "blynkAuthToken.h"
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.24";
+String VERSION = "Version 0.25";
 /*******************************************************************************
  * changes in version 0.09:
        * reorganized code to group functions
@@ -100,6 +100,9 @@ String VERSION = "Version 0.24";
                  source: https://www.hackster.io/gusgonnet/pushing-data-to-google-docs-02f9c4
  * changes in version 0.24:
            * Reverting to Heating/Cooling from Winter/Summer modes
+ * changes in version 0.25:
+           * Renaming to Heat/Cool from Heating/Cooling modes
+           * changing the margin to .10 from 0.25 because we can feel the difference in temperature in the extremes
 
 TODO:
   * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
@@ -199,7 +202,7 @@ float currentHumidity = 0.0;
 // a smaller value will make your temperature more constant at the price of
 //  starting the heat more times
 // a larger value will reduce the number of times the HVAC comes on but will leave it on a longer time
-float margin = 0.25;
+float margin = 0.10;
 
 //sensor difference with real temperature (if none set to zero)
 //use this variable to align measurements with your existing thermostat
@@ -227,8 +230,8 @@ elapsedMillis pulseButtonClickTimer;
 
 //here are the possible modes the thermostat can be in: off/heat/cool
 #define MODE_OFF "Off"
-#define MODE_HEAT "Heating"
-#define MODE_COOL "Cooling"
+#define MODE_HEAT "Heat"
+#define MODE_COOL "Cool"
 String externalMode = MODE_OFF;
 String internalMode = MODE_OFF;
 bool modeButtonClick = false;

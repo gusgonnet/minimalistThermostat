@@ -9,3 +9,5 @@ blynk.h
 blynkAuthToken.h
 Blynk*
 Widget*
+.vscode
+blynk*
