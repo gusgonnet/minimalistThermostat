@@ -1,34 +1,46 @@
-//The MIT License (MIT)
-//Copyright (c) 2016 Gustavo Gonnet
+// Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
+// This is a human-readable summary of (and not a substitute for) the license.
+// Disclaimer
 //
-//Permission is hereby granted, free of charge, to any person obtaining a copy of this software
-// and associated documentation files (the "Software"), to deal in the Software without restriction,
-// including without limitation the rights to use, copy, modify, merge, publish, distribute,
-// sublicense, and/or sell copies of the Software, and to permit persons to whom the Software
-// is furnished to do so, subject to the following conditions:
+// You are free to:
+// Share — copy and redistribute the material in any medium or format
+// Adapt — remix, transform, and build upon the material
+// The licensor cannot revoke these freedoms as long as you follow the license terms.
 //
-//The above copyright notice and this permission notice shall be included in all copies
-// or substantial portions of the Software.
+// Under the following terms:
+// Attribution — You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your use.
+// NonCommercial — You may not use the material for commercial purposes.
+// ShareAlike — If you remix, transform, or build upon the material, you must distribute your contributions under the same license as the original.
+// No additional restrictions — You may not apply legal terms or technological measures that legally restrict others from doing anything the license permits.
 //
-//THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-// PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
-// WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
-// OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+// Notices:
+// You do not have to comply with the license for elements of the material in the public domain or where your use is permitted by an applicable exception or limitation.
+// No warranties are given. The license may not give you all of the permissions necessary for your intended use. For example, other rights such as publicity, privacy, or moral rights may limit how you use the material.
 //
 // github: https://github.com/gusgonnet/minimalistThermostat
 // hackster: https://www.hackster.io/gusgonnet/the-minimalist-thermostat-bb0410
+//
+// Free for personal use.
+//
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
 
+/*******************************************************************************
 // ncd.io relay support, comment out if you are not using this board:
 // https://store.ncd.io/product/4-channel-general-purpose-spdt-relay-shield-4-gpio-with-iot-interface/
-#define USE_NCD_RELAYS
+*******************************************************************************/
+// #define USE_NCD_RELAYS
 
 /*******************************************************************************
  Here you decide if you want to use Blynk or not by 
  commenting this line "#define USE_BLYNK" (or not)
 *******************************************************************************/
 #define USE_BLYNK
+
+/*******************************************************************************
+ This activates an ssd1306 display - 128x64 oled
+ Most probably this cannot be used with relays on D0 and D1!
+*******************************************************************************/
+// #define USE_OLED_DISPLAY
 
 #include "elapsedMillis.h"
 #include "PietteTech_DHT.h"
@@ -40,8 +52,13 @@
 #include "blynkAuthToken.h"
 #endif
 
+#ifdef USE_OLED_DISPLAY
+#include "Adafruit_SSD1306.h"
+#endif
+
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.26";
+String VERSION = "Version 0.30";
+// * BREAKING CHANGE in 0.27!!! DHT moved from D4 to D5
 
 /*******************************************************************************
  * changes in version 0.09:
@@ -117,14 +134,27 @@ String VERSION = "Version 0.26";
  * changes in version 0.25:
            * updated D0/D1/D2 to D1/D2/D3 since my photon's D0 is not behaving
            * Renaming to Heat/Cool from Heating/Cooling modes
- * changes in version 0.26a:
+ * changes in version 0.26:
+           * Particle build share link: https://go.particle.io/shared_apps/5a30567d31ef4463730008ad  
            * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
            * adding support for ncd.io 4 relays board:
               https://store.ncd.io/product/4-channel-general-purpose-spdt-relay-shield-4-gpio-with-iot-interface/
            * reducing DEBOUNCE_SETTINGS to 2000
            * reducing DEBOUNCE_SETTINGS_MODE to 4000
            * changed and simplified code with
-                 if (USE_BLYNK == "yes") to #define USE_BLYNK
+              if (USE_BLYNK == "yes") to #define USE_BLYNK
+           * adding oled 128*64 support
+ * changes in version 0.27:
+           * Particle build share link: https://go.particle.io/shared_apps/5af213e3d51e93abd20003b0
+           * adding setFan(), setMode() and setTargetTemp() cloud functions
+           * BREAKING CHANGE!!! DHT moved from D4 to D5
+ * changes in version 0.28:
+           * adding watchdog
+           * reset if no wifi for 2 minutes
+ * changes in version 0.29:
+           * decreasing temp threshold from 0.10 to 0.05
+ * changes in version 0.30:
+           * increasing temp threshold from 0.05 to 0.20, otherwise the heat starts and stops too soon and often
 
                  
 TODO:
@@ -135,8 +165,19 @@ TODO:
 
 *******************************************************************************/
 
+// use google sheets?
+// source: https://www.hackster.io/gusgonnet/pushing-data-to-google-docs-02f9c4
+// #define USE_GOOGLE_SHEETS
+
+// use pushbullet for notifications?
+// source: https://www.hackster.io/gusgonnet/sharing-the-push-notifications-of-your-hardware-b558ae
+#define USE_PUSHBULLET
+
+#ifdef USE_PUSHBULLET
 #define PUSHBULLET_NOTIF_HOME "pushbulletHOME"         //-> family group in pushbullet
 #define PUSHBULLET_NOTIF_PERSONAL "pushbulletPERSONAL" //-> only my phone
+#endif
+
 const int TIME_ZONE = -4;
 
 /*******************************************************************************
@@ -176,11 +217,11 @@ elapsedMillis pulseTimer;
 /*******************************************************************************
  IO mapping
 *******************************************************************************/
-// D0 : relay: fan
-// D1 : relay: heat
-// D2 : relay: cool
-// D4 : DHT22
-// D3, D5~D7 : unused
+// D1 : relay1: fan
+// D2 : relay2: heat
+// D3 : relay3: cool
+// D5 : DHT22
+// D0, D4, D6, D7 : unused
 // A0~A7 : unused
 int fan = D1;
 int heat = D2;
@@ -194,8 +235,8 @@ int coolOutput;
  DHT sensor
 *******************************************************************************/
 #define DHTTYPE DHT22            // Sensor type DHT11/21/22/AM2301/AM2302
-#define DHTPIN 4                 // Digital pin for communications
-#define DHT_SAMPLE_INTERVAL 5000 // Sample room temperature every 5 seconds
+#define DHTPIN 5                 // Digital pin for communications
+#define DHT_SAMPLE_INTERVAL 5000 // Sample room temperature every 5 seconds \
                                  //  this is then averaged in temperatureAverage
 void dht_wrapper();              // must be declared before the lib initialization
 PietteTech_DHT DHT(DHTPIN, DHTTYPE, dht_wrapper);
@@ -222,7 +263,7 @@ float currentHumidity = 0.0;
 // a smaller value will make your temperature more constant at the price of
 //  starting the heat more times
 // a larger value will reduce the number of times the HVAC comes on but will leave it on a longer time
-float margin = 0.10;
+float margin = 0.20;
 
 //sensor difference with real temperature (if none set to zero)
 //use this variable to align measurements with your existing thermostat
@@ -325,17 +366,20 @@ SYSTEM_THREAD(ENABLED);
 NCD4Relay relayController;
 int triggerRelay(String command);
 
-// timers for switching off the relays
-elapsedMillis timerOnRelay1;
-elapsedMillis timerOnRelay2;
-elapsedMillis timerOnRelay3;
+// timers for switching off the relays - the only one supported here is relay 4
+// suince all others are used by the thermostat
 elapsedMillis timerOnRelay4;
-int turnOffRelay1AfterTime = 0;
-int turnOffRelay2AfterTime = 0;
-int turnOffRelay3AfterTime = 0;
 int turnOffRelay4AfterTime = 0;
+#endif
 
-#else
+#ifdef USE_OLED_DISPLAY
+Adafruit_SSD1306 display(D4);
+
+//this defines how often the display is updated
+#define OLED_UPDATE_INTERVAL 5000
+elapsedMillis oledUpdateInterval;
+int oledStep = 0;
+
 #endif
 
 /*******************************************************************************
@@ -360,6 +404,13 @@ EepromMemoryStructure eepromMemory;
 bool settingsHaveChanged = false;
 elapsedMillis settingsHaveChanged_timer;
 #define SAVE_SETTINGS_INTERVAL 10000
+
+// reset the system after 120 seconds if the application is unresponsive
+// https://docs.particle.io/reference/device-os/firmware/photon/#application-watchdog
+ApplicationWatchdog wd(120000, System.reset);
+
+#define RESET_IF_NO_WIFI 120000
+elapsedMillis resetIfNoWifiInterval;
 
 /*******************************************************************************
  * Function Name  : setup
@@ -404,11 +455,14 @@ void setup()
   // Up to 15 cloud functions may be registered and each function name is limited
   // to a maximum of 12 characters.
   Particle.function("setTargetTmp", setTargetTemp);
+  Particle.function("setMode", setMode);
+  Particle.function("setFan", setFan);
+  // Particle.function("setPulse", setPulse);
 
   //TESTING_HACK
-  Particle.function("setCurrTmp", setCurrentTemp);
   Particle.function("getOutputs", getOutputs);
-  Particle.function("setTesting", setTesting);
+  // Particle.function("setCurrTmp", setCurrentTemp);
+  // Particle.function("setTesting", setTesting);
 
 #ifdef USE_BLYNK
   Blynk.begin(auth);
@@ -422,6 +476,10 @@ void setup()
   {
     temperatureSamples[i] = DUMMY;
   }
+
+#ifdef USE_OLED_DISPLAY
+  setupDisplay();
+#endif
 
   //restore settings from eeprom, if there were any saved before
   readFromEeprom();
@@ -454,22 +512,88 @@ void loop()
   updatePulseStatus();
   updateMode();
 
+#ifdef USE_OLED_DISPLAY
+  updateDisplay();
+#endif
+
   //this function updates the FSM
   // the FSM is the heart of the thermostat - all actions are defined by its states
   thermostatStateMachine.update();
 
   //every now and then we save the settings
   saveSettings();
+
+#if PLATFORM_ID == PLATFORM_PHOTON_PRODUCTION
+    resetIfNoWifi();
+#endif
+
+}
+
+
+/*******************************************************************************/
+/*******************************************************************************/
+/*******************          CLOUD FUNCTIONS         *************************/
+/*******************************************************************************/
+/*******************************************************************************/
+
+/*******************************************************************************
+ * Function Name  : setFan
+ * Description    : sets the target temperature of the thermostat
+                    newTargetTemp has to be a valid float value, or no new target temp will be set
+ * Return         : 0 if all is good, or -1 if the parameter cannot be converted to float or
+                    is not in the accepted range (15<t<30 celsius)
+ *******************************************************************************/
+int setFan(String newFan)
+{
+  if (newFan.equalsIgnoreCase("on"))
+  {
+    internalFan = true;
+    flagSettingsHaveChanged();
+    return 0;
+  }
+
+  if (newFan.equalsIgnoreCase("off"))
+  {
+    internalFan = false;
+    flagSettingsHaveChanged();
+    return 0;
+  }
+
+  // else parameter was invalid
+  return -1;
+
+}
+
+/*******************************************************************************
+ * Function Name  : setMode
+ * Description    : sets the target temperature of the thermostat
+                    newTargetTemp has to be a valid float value, or no new target temp will be set
+ * Return         : 0 if all is good, or -1 if the parameter cannot be converted to float or
+                    is not in the accepted range (15<t<30 celsius)
+ *******************************************************************************/
+int setMode(String newMode)
+{
+  //mode: cycle through off->heating->cooling
+  // do this only when blynk sends a 1
+  // background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
+  // source: http://docs.blynk.cc/#widgets-controllers-button
+  if ( ( newMode != MODE_OFF) && ( newMode != MODE_HEAT) && ( newMode!= MODE_COOL ))
+  {
+    return -1;
+  }
+
+  externalMode = newMode;
+  flagSettingsHaveChanged();
+  return 0;
+
 }
 
 /*******************************************************************************
  * Function Name  : setTargetTemp
  * Description    : sets the target temperature of the thermostat
                     newTargetTemp has to be a valid float value, or no new target temp will be set
- * Behavior       : the new setting will not take place right away, but moments after
-                    since a timer is triggered. This is to debounce the setting and
-                    allow the users to change their mind
-* Return         : 0 if all is good, or -1 if the parameter does not match on or off
+ * Return         : 0 if all is good, or -1 if the parameter cannot be converted to float or
+                    is not in the accepted range (15<t<30 celsius)
  *******************************************************************************/
 int setTargetTemp(String temp)
 {
@@ -477,7 +601,47 @@ int setTargetTemp(String temp)
   //update the target temp only in the case the conversion to float works
   // (toFloat returns 0 if there is a problem in the conversion)
   // sorry, if you wanted to set 0 as the target temp, you can't :)
-  if (tmpFloat > 0)
+  if ((tmpFloat > 0) && (tmpFloat > 14.9) && (tmpFloat < 31))
+  {
+    //newTargetTemp will be copied to targetTemp moments after in function updateTargetTemp()
+    // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
+    targetTemp = tmpFloat;
+    targetTempString = float2string(targetTemp);
+    flagSettingsHaveChanged();
+    return 0;
+  }
+
+  //show only 2 decimals in notifications
+  // Example: show 19.00 instead of 19.000000
+  temp = temp.substring(0, temp.length() - 4);
+
+  //if the execution reaches here then the value was invalid
+  //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
+  //  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
+  String tempStatus = "ERROR: Failed to set new target temp to " + temp + getTime();
+  publishEvent(tempStatus);
+  return -1;
+}
+
+
+
+/*******************************************************************************
+ * Function Name  : setTargetTempInternal
+ * Description    : sets the target temperature of the thermostat
+                    newTargetTemp has to be a valid float value, or no new target temp will be set
+ * Behavior       : the new setting will not take place right away, but moments after
+                    since a timer is triggered. This is to debounce the setting and
+                    allow the users to change their mind
+* Return         : 0 if all is good, or -1 if the parameter cannot be converted to float or
+                    is not in the accepted range (15<t<30 celsius)
+ *******************************************************************************/
+int setTargetTempInternal(String temp)
+{
+  float tmpFloat = temp.toFloat();
+  //update the target temp only in the case the conversion to float works
+  // (toFloat returns 0 if there is a problem in the conversion)
+  // sorry, if you wanted to set 0 as the target temp, you can't :)
+  if ((tmpFloat > 0) && (tmpFloat > 14.9) && (tmpFloat < 31))
   {
     //newTargetTemp will be copied to targetTemp moments after in function updateTargetTemp()
     // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
@@ -495,14 +659,14 @@ int setTargetTemp(String temp)
   //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
   //  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
   String tempStatus = "ERROR: Failed to set new target temp to " + temp + getTime();
-  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+  publishEvent(tempStatus);
   return -1;
 }
 
 /*******************************************************************************
  * Function Name  : updateTargetTemp
  * Description    : updates the value of target temperature of the thermostat
-                    moments after it was set with setTargetTemp
+                    moments after it was set with setTargetTempInternal
  * Return         : none
  *******************************************************************************/
 void updateTargetTemp()
@@ -524,7 +688,7 @@ void updateTargetTemp()
   //Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
   //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New target temp: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
   String tempStatus = "New target temp: " + targetTempString + "°C" + getTime();
-  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+  publishEvent(tempStatus);
 }
 
 /*******************************************************************************
@@ -580,13 +744,13 @@ void updateFanStatus()
   {
     //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan on" + getTime(), 60, PRIVATE);
     String tempStatus = "Fan on" + getTime();
-    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+    publishEvent(tempStatus);
   }
   else
   {
     //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan off" + getTime(), 60, PRIVATE);
     String tempStatus = "Fan off" + getTime();
-    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+    publishEvent(tempStatus);
   }
 }
 
@@ -671,7 +835,7 @@ void updateMode()
   internalMode = externalMode;
   //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Mode set to " + internalMode + getTime(), 60, PRIVATE);
   String tempStatus = "Mode set to " + internalMode + getTime();
-  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+  publishEvent(tempStatus);
 }
 
 /*******************************************************************************
@@ -911,7 +1075,7 @@ void heatingEnterFunction()
 
   //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat on" + getTime(), 60, PRIVATE);
   String tempStatus = "Heat on" + getTime();
-  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+  publishEvent(tempStatus);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, HIGH);
   myDigitalWrite(cool, LOW);
@@ -932,7 +1096,7 @@ void heatingUpdateFunction()
   {
     //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
     String tempStatus = "Desired temperature reached: " + targetTempString + "°C" + getTime();
-    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+    publishEvent(tempStatus);
     thermostatStateMachine.transitionTo(idleState);
   }
 
@@ -946,7 +1110,7 @@ void heatingExitFunction()
 {
   //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat off" + getTime(), 60, PRIVATE);
   String tempStatus = "Heat off" + getTime();
-  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+  publishEvent(tempStatus);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, LOW);
@@ -961,7 +1125,7 @@ void pulseEnterFunction()
 {
   //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse on" + getTime(), 60, PRIVATE);
   String tempStatus = "Pulse on" + getTime();
-  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+  publishEvent(tempStatus);
   if (internalMode == MODE_HEAT)
   {
     myDigitalWrite(fan, HIGH);
@@ -1011,7 +1175,7 @@ void pulseExitFunction()
   internalPulse = false;
   //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse off" + getTime(), 60, PRIVATE);
   String tempStatus = "Pulse off" + getTime();
-  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+  publishEvent(tempStatus);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, LOW);
@@ -1032,7 +1196,7 @@ void coolingEnterFunction()
 
   //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool on" + getTime(), 60, PRIVATE);
   String tempStatus = "Cool on" + getTime();
-  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+  publishEvent(tempStatus);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, HIGH);
@@ -1053,7 +1217,7 @@ void coolingUpdateFunction()
   {
     //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
     String tempStatus = "Desired temperature reached: " + targetTempString + "°C" + getTime();
-    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+    publishEvent(tempStatus);
     thermostatStateMachine.transitionTo(idleState);
   }
 
@@ -1067,7 +1231,7 @@ void coolingExitFunction()
 {
   //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool off" + getTime(), 60, PRIVATE);
   String tempStatus = "Cool off" + getTime();
-  Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+  publishEvent(tempStatus);
   myDigitalWrite(fan, LOW);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, LOW);
@@ -1142,7 +1306,7 @@ int setCurrentTemp(String newCurrentTemp)
     //Particle.publish(APP_NAME, "New current temp: " + currentTempString, 60, PRIVATE);
     //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New current temp: " + currentTempString + getTime(), 60, PRIVATE);
     String tempStatus = "New current temp: " + currentTempString + getTime();
-    Particle.publish("googleDocs", "{\"my-name\":\"" + tempStatus + "\"}", 60, PRIVATE);
+    publishEvent(tempStatus);
     return 0;
   }
   else
@@ -1155,7 +1319,7 @@ int setCurrentTemp(String newCurrentTemp)
 
 /*******************************************************************************
  * Function Name  : myDigitalWrite
- * Description    : writes to the pin and sets a variable to keep track
+ * Description    : writes to the pin or the relayController and sets a variable to keep track
                     this is a hack that allows me to system test the project
                     and know what is the status of the outputs
  * Return         : void
@@ -1163,11 +1327,26 @@ int setCurrentTemp(String newCurrentTemp)
 void myDigitalWrite(int input, int status)
 {
 
+#ifdef USE_NCD_RELAYS
+  if (status == LOW)
+  {
+    // relayController.turnOffRelay(convertPinToRelay(input));
+    relayController.turnOffRelay(input);
+  }
+  else
+  {
+    relayController.turnOnRelay(input);
+  }
+#else
   digitalWrite(input, status);
+#endif
 
   if (input == fan)
   {
     fanOutput = status;
+
+    Particle.publish("DEBUG fan", String(status), 60, PRIVATE);
+
 #ifdef USE_BLYNK
     BLYNK_setFanLed(status);
 #endif
@@ -1214,6 +1393,44 @@ void setState(String newState)
 #ifdef USE_BLYNK
   Blynk.virtualWrite(BLYNK_DISPLAY_STATE, state);
 #endif
+}
+
+/*******************************************************************************
+ * Function Name  : publishEvent
+ * Description    : publishes an event, to the particle console or google sheets
+ * Return         : none
+ *******************************************************************************/
+void publishEvent(String event)
+{
+
+#ifdef USE_GOOGLE_SHEETS
+  Particle.publish("googleDocs", "{\"my-name\":\"" + event + "\"}", 60, PRIVATE);
+#else
+  Particle.publish("event", event, 60, PRIVATE);
+#endif
+}
+
+/*******************************************************************************
+ * Function Name  : convertPinToRelay
+ * Description    : send in a pin, get a relay number
+ * Return         : the relay number
+ *******************************************************************************/
+int convertPinToRelay(int pin)
+{
+  Particle.publish("DEBUG convertPinToRelay", String(pin), 60, PRIVATE);
+
+  switch (pin)
+  {
+  case 1: //fan:
+    return 1;
+    break;
+  case 2: //heat:
+    return 2;
+    break;
+  case 3: //cool:
+    return 3;
+    break;
+  }
 }
 
 /*******************************************************************************/
@@ -1320,7 +1537,7 @@ BLYNK_WRITE(BLYNK_SLIDER_TEMP)
 {
   //this is the blynk slider
   // source: http://docs.blynk.cc/#widgets-controllers-slider
-  setTargetTemp(param.asStr());
+  setTargetTempInternal(param.asStr());
   flagSettingsHaveChanged();
 }
 
@@ -1555,43 +1772,22 @@ int relayStatus(String relay)
  *******************************************************************************/
 int triggerRelay(String command)
 {
-  if (command.equalsIgnoreCase("turnonallrelays"))
-  {
-    relayController.turnOnAllRelays();
-    return 1;
-  }
   if (command.equalsIgnoreCase("turnoffallrelays"))
   {
     relayController.turnOffAllRelays();
     return 1;
   }
-  if (command.startsWith("setBankStatus:"))
-  {
-    int status = command.substring(14).toInt();
-    if (status < 0 || status > 255)
-    {
-      return 0;
-    }
-    Serial.print("Setting bank status to: ");
-    Serial.println(status);
-    relayController.setBankStatus(status);
-    Serial.println("done");
-    return 1;
-  }
 
   // Relay Specific Command
-  // this supports "34on", "12off", "13on", "13off" for example
-  // this supports "34on5", "1on3", "13on40" to turn on relay(s) for a number of minutes
+  // this supports "4on", "4off" for example
+  // this supports "4on5", "4on40" to turn on relay 4 for a number of minutes
   String tempCommand = command.toLowerCase();
   // this var will store the number of minutes for a relay to be on
   int timeOn = 0;
   int relayNumber1 = 0;
-  int relayNumber2 = 0;
-  int relayNumber3 = 0;
-  int relayNumber4 = 0;
 
   //parse the first relay number
-  if (firstCharIsNumber1to4(tempCommand))
+  if (firstCharIsNumber4(tempCommand))
   {
     relayNumber1 = tempCommand.substring(0, 1).toInt();
     Serial.print("relayNumber1: ");
@@ -1600,43 +1796,10 @@ int triggerRelay(String command)
     tempCommand = tempCommand.substring(1);
   }
 
-  //check if first char is a digit
-  if (firstCharIsNumber1to4(tempCommand))
-  {
-    //parse the second relay number
-    relayNumber2 = tempCommand.substring(0, 1).toInt();
-    Serial.print("relayNumber2: ");
-    Serial.println(relayNumber2);
-    //then remove the char
-    tempCommand = tempCommand.substring(1);
-  }
-
-  //check if first char is a digit
-  if (firstCharIsNumber1to4(tempCommand))
-  {
-    //parse the third relay number
-    relayNumber3 = tempCommand.substring(0, 1).toInt();
-    Serial.print("relayNumber3: ");
-    Serial.println(relayNumber3);
-    //then remove the char
-    tempCommand = tempCommand.substring(1);
-  }
-
-  //check if first char is a digit
-  if (firstCharIsNumber1to4(tempCommand))
-  {
-    //parse the fourth relay number
-    relayNumber4 = tempCommand.substring(0, 1).toInt();
-    Serial.print("relayNumber4: ");
-    Serial.println(relayNumber4);
-    //then remove the char
-    tempCommand = tempCommand.substring(1);
-  }
-
   //check if next chars are equal to on, if so, check if there was a specific ON time sent
   // it would be after the on
-  // example: 34on50 for turning both relays 3 and 4 on for 50 minutes
-  // when the program reaches this point, 34 have already been parsed
+  // example: 4on50 for turning relay 4 on for 50 minutes
+  // when the program reaches this point, 4 have already been parsed
   // so here we would end up with on50
   if (tempCommand.startsWith("on"))
   {
@@ -1652,54 +1815,48 @@ int triggerRelay(String command)
   Serial.print(tempCommand);
   Serial.println(".");
 
-  int relayNumbers[4] = {relayNumber1, relayNumber2, relayNumber3, relayNumber4};
-
   int returnValue = 0;
   int relayNumber;
   int i;
 
-  // explore all 4 relays
-  for (i = 1; i <= 4; i++)
+  // analize this particular relay
+  relayNumber = relayNumber1;
+
+  if (relayNumber = 4)
   {
-    // analize this particular relay
-    relayNumber = relayNumbers[i - 1];
 
-    if (relayNumber > 0)
+    Particle.publish("command/relay/minutes", tempCommand + "/" + String(relayNumber) + "/" + String(timeOn), 60, PRIVATE);
+
+    if (tempCommand.equalsIgnoreCase("on"))
     {
+      Serial.println("Turning on relay");
+      relayController.turnOnRelay(relayNumber);
 
-      Particle.publish("command/relay/minutes", tempCommand + "/" + String(relayNumber) + "/" + String(timeOn), 60, PRIVATE);
+      // if timeOn is not zero, then turn the relay off after timeOn minutes
+      if (timeOn != 0)
+      {
+        turnOnRelayForSomeMinutes(relayNumber, timeOn);
+      }
 
-      if (tempCommand.equalsIgnoreCase("on"))
-      {
-        Serial.println("Turning on relay");
-        relayController.turnOnRelay(relayNumber);
-
-        // if timeOn is not zero, then turn the relay off after timeOn minutes
-        if (timeOn != 0)
-        {
-          turnOnRelayForSomeMinutes(relayNumber, timeOn);
-        }
-
-        Serial.println("returning");
-        returnValue = 1;
-      }
-      if (tempCommand.equalsIgnoreCase("off"))
-      {
-        relayController.turnOffRelay(relayNumber);
-        returnValue = 1;
-      }
-      if (tempCommand.equalsIgnoreCase("toggle"))
-      {
-        relayController.toggleRelay(relayNumber);
-        returnValue = 1;
-      }
-      if (tempCommand.equalsIgnoreCase("momentary"))
-      {
-        relayController.turnOnRelay(relayNumber);
-        delay(300);
-        relayController.turnOffRelay(relayNumber);
-        returnValue = 1;
-      }
+      Serial.println("returning");
+      returnValue = 1;
+    }
+    if (tempCommand.equalsIgnoreCase("off"))
+    {
+      relayController.turnOffRelay(relayNumber);
+      returnValue = 1;
+    }
+    if (tempCommand.equalsIgnoreCase("toggle"))
+    {
+      relayController.toggleRelay(relayNumber);
+      returnValue = 1;
+    }
+    if (tempCommand.equalsIgnoreCase("momentary"))
+    {
+      relayController.turnOnRelay(relayNumber);
+      delay(300);
+      relayController.turnOffRelay(relayNumber);
+      returnValue = 1;
     }
   }
 
@@ -1707,28 +1864,16 @@ int triggerRelay(String command)
 }
 
 /*******************************************************************************
- * Function Name  : firstCharIsNumber1to4
- * Description    : returns true if the parameter starts with a number between 1 and 4
+ * Function Name  : firstCharIsNumber4
+ * Description    : returns true if the parameter starts with a number 4
  *******************************************************************************/
-bool firstCharIsNumber1to4(String string)
+bool firstCharIsNumber4(String string)
 {
-  if (string.startsWith("1"))
-  {
-    return true;
-  }
-  if (string.startsWith("2"))
-  {
-    return true;
-  }
-  if (string.startsWith("3"))
-  {
-    return true;
-  }
   if (string.startsWith("4"))
   {
     return true;
   }
-  // not a 1~4 digit
+  // not a 4 digit
   return false;
 }
 
@@ -1741,24 +1886,6 @@ void turnOnRelayForSomeMinutes(int relay, int timeOn)
 
   switch (relay)
   {
-  case 1:
-    relayController.turnOnRelay(relay);
-    timerOnRelay1 = 0;
-    turnOffRelay1AfterTime = timeOn * MILLISECONDS_TO_MINUTES;
-
-    Particle.publish("in turnOnRelayForSomeMinutes", String(relay) + "/" + String(turnOffRelay1AfterTime), 60, PRIVATE);
-
-    break;
-  case 2:
-    relayController.turnOnRelay(relay);
-    timerOnRelay2 = 0;
-    turnOffRelay2AfterTime = timeOn * MILLISECONDS_TO_MINUTES;
-    break;
-  case 3:
-    relayController.turnOnRelay(relay);
-    timerOnRelay3 = 0;
-    turnOffRelay3AfterTime = timeOn * MILLISECONDS_TO_MINUTES;
-    break;
   case 4:
     relayController.turnOnRelay(relay);
     timerOnRelay4 = 0;
@@ -1774,33 +1901,92 @@ void turnOnRelayForSomeMinutes(int relay, int timeOn)
 void turnOffRelayAutomatically()
 {
 
-  // is time up for relay1?
-  if ((turnOffRelay1AfterTime != 0) && (timerOnRelay1 > turnOffRelay1AfterTime))
-  {
-    turnOffRelay1AfterTime = 0;
-    relayController.turnOffRelay(1);
-    Particle.publish("in turnOffRelay", "", 60, PRIVATE);
-  }
-
-  // is time up for relay2?
-  if ((turnOffRelay2AfterTime != 0) && (timerOnRelay2 > turnOffRelay2AfterTime))
-  {
-    turnOffRelay2AfterTime = 0;
-    relayController.turnOffRelay(2);
-  }
-
-  // is time up for relay3?
-  if ((turnOffRelay3AfterTime != 0) && (timerOnRelay3 > turnOffRelay3AfterTime))
-  {
-    turnOffRelay3AfterTime = 0;
-    relayController.turnOffRelay(3);
-  }
-
   // is time up for relay4?
   if ((turnOffRelay4AfterTime != 0) && (timerOnRelay4 > turnOffRelay4AfterTime))
   {
     turnOffRelay4AfterTime = 0;
     relayController.turnOffRelay(4);
+  }
+}
+
+#endif
+
+/*******************************************************************************/
+/*******************************************************************************/
+/*******************           OLED FUNCTIONS          *************************/
+/*******************************************************************************/
+/*******************************************************************************/
+#ifdef USE_OLED_DISPLAY
+
+/*******************************************************************************
+ * Function Name  : setupDisplay
+ * Description    : init the display
+ * Return         : none
+ *******************************************************************************/
+void setupDisplay()
+{
+
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C); // initialize with the I2C addr 0x3c (for the 128x64)
+
+  display.setTextSize(4);
+  display.setTextColor(WHITE);
+  display.setCursor(0, 0);
+  display.clearDisplay();
+  display.display();
+}
+
+/*******************************************************************************
+ * Function Name  : updateDisplay
+ * Description    : update what is shown in the OLED display
+ * Return         : none
+ *******************************************************************************/
+void updateDisplay()
+{
+
+  //is it time to store in the blynk cloud? if so, do it
+  if (oledUpdateInterval > OLED_UPDATE_INTERVAL)
+  {
+
+    //reset timer
+    oledUpdateInterval = 0;
+
+    display.clearDisplay();
+    display.setTextSize(4);
+    display.setTextColor(WHITE);
+    display.setCursor(0, 0);
+
+    switch (oledStep)
+    {
+    // show target temp
+    case 0:
+      display.setTextSize(1);
+      display.println("Target temp");
+      display.setTextSize(3);
+      display.print(targetTempString);
+      break;
+    // show current temp
+    case 1:
+      display.setTextSize(1);
+      display.println("Current temp");
+      display.setTextSize(3);
+      display.print(currentTempString);
+      break;
+      // show humidity
+    case 2:
+      display.setTextSize(1);
+      display.println("Humidity");
+      display.setTextSize(3);
+      display.print(currentHumidityString);
+      break;
+    }
+
+    display.display();
+
+    oledStep = oledStep + 1;
+    if (oledStep == 3)
+    {
+      oledStep = 0;
+    }
   }
 }
 
@@ -1952,3 +2138,34 @@ uint8_t convertModeToInt(String mode)
   //in all other cases
   return 0;
 }
+
+/*******************************************************************************
+ * Function Name  : resetIfNoWifi
+ * Description    : this function resets the device if there is no wifi for more than 2 minutes
+ *******************************************************************************/
+#if PLATFORM_ID == PLATFORM_PHOTON_PRODUCTION
+void resetIfNoWifi()
+{
+
+    // never reset if it is connected to wifi
+    if (WiFi.ready())
+    {
+        Serial.println("wifi detected");
+        resetIfNoWifiInterval = 0;
+        return;
+    }
+
+    Serial.println("wifi not detected");
+
+    // is time up? no, then come back later
+    if (resetIfNoWifiInterval < RESET_IF_NO_WIFI)
+    {
+        return;
+    }
+
+    // it comes here if it was not connected to wifi for RESET_IF_NO_WIFI
+    Serial.println("Resetting device");
+    delay(1000);
+    System.reset();
+}
+#endif
