@@ -1,3 +1,9 @@
+/******************************************************/
+//       THIS IS A GENERATED FILE - DO NOT EDIT       //
+/******************************************************/
+
+#include "Particle.h"
+#line 1 "/Users/me/0trabajo/gus/minimalistThermostat/minimalistthermostat.ino"
 // Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
 // This is a human-readable summary of (and not a substitute for) the license.
 // Disclaimer
@@ -34,6 +40,59 @@
  Here you decide if you want to use Blynk or not by 
  commenting this line "#define USE_BLYNK" (or not)
 *******************************************************************************/
+void setup();
+void loop();
+int setFan(String newFan);
+int setMode(String newMode);
+int setTargetTemp(String temp);
+int setTargetTempInternal(String temp);
+void updateTargetTemp();
+String float2string(float floatNumber);
+void updateFanStatus();
+void updatePulseStatus();
+void updateMode();
+int readTemperature();
+int publishTemperature(float temperature, float humidity);
+void initEnterFunction();
+void initUpdateFunction();
+void initExitFunction();
+void idleEnterFunction();
+void idleUpdateFunction();
+void idleExitFunction();
+void heatingEnterFunction();
+void heatingUpdateFunction();
+void heatingExitFunction();
+void pulseEnterFunction();
+void pulseUpdateFunction();
+void pulseExitFunction();
+void coolingEnterFunction();
+void coolingUpdateFunction();
+void coolingExitFunction();
+int setTesting(String test);
+int getOutputs(String dummy);
+int setCurrentTemp(String newCurrentTemp);
+void myDigitalWrite(int input, int status);
+String getTime();
+void setState(String newState);
+void publishEvent(String event);
+int convertPinToRelay(int pin);
+void BLYNK_setFanLed(int status);
+void BLYNK_setHeatLed(int status);
+void BLYNK_setCoolLed(int status);
+void updateBlynkCloud();
+int relayStatus(String relay);
+bool firstCharIsNumber4(String string);
+void turnOnRelayForSomeMinutes(int relay, int timeOn);
+void turnOffRelayAutomatically();
+void setupDisplay();
+void updateDisplay();
+void flagSettingsHaveChanged();
+void readFromEeprom();
+void saveSettings();
+String convertIntToMode(uint8_t mode);
+uint8_t convertModeToInt(String mode);
+void resetIfNoWifi();
+#line 37 "/Users/me/0trabajo/gus/minimalistThermostat/minimalistthermostat.ino"
 #define USE_BLYNK
 
 /*******************************************************************************
