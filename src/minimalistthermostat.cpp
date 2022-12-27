@@ -1,3 +1,9 @@
+/******************************************************/
+//       THIS IS A GENERATED FILE - DO NOT EDIT       //
+/******************************************************/
+
+#include "Particle.h"
+#line 1 "/Users/me/0trabajo/gus/minimalistThermostat2023/src/minimalistthermostat.ino"
 // Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
 // This is a human-readable summary of (and not a substitute for) the license.
 // Disclaimer
@@ -31,9 +37,59 @@
 // #define USE_NCD_RELAYS
 
 /*******************************************************************************
- Here you decide if you want to use Blynk or not by 
+ Here you decide if you want to use Blynk or not by
  commenting this line "#define USE_BLYNK" (or not)
 *******************************************************************************/
+void setup();
+void loop();
+int setFan(String newFan);
+int setMode(String newMode);
+int setTargetTemp(String temp);
+int setTargetTempInternal(String temp);
+void updateTargetTemp();
+String float2string(float floatNumber);
+void updateFanStatus();
+void updatePulseStatus();
+void updateMode();
+int readTemperature();
+int publishTemperature(float temperature, float humidity);
+void initEnterFunction();
+void initUpdateFunction();
+void initExitFunction();
+void idleEnterFunction();
+void idleUpdateFunction();
+void idleExitFunction();
+void heatingEnterFunction();
+void heatingUpdateFunction();
+void heatingExitFunction();
+void pulseEnterFunction();
+void pulseUpdateFunction();
+void pulseExitFunction();
+void coolingEnterFunction();
+void coolingUpdateFunction();
+void coolingExitFunction();
+int setTesting(String test);
+int getOutputs(String dummy);
+int setCurrentTemp(String newCurrentTemp);
+void myDigitalWrite(int input, int status);
+String getTime();
+void setState(String newState);
+void publishEvent(String event);
+int convertPinToRelay(int pin);
+int relayStatus(String relay);
+bool firstCharIsNumber4(String string);
+void turnOnRelayForSomeMinutes(int relay, int timeOn);
+void turnOffRelayAutomatically();
+void setupDisplay();
+void updateDisplay();
+void flagSettingsHaveChanged();
+void readFromEeprom();
+void saveSettings();
+String convertIntToMode(uint8_t mode);
+uint8_t convertModeToInt(String mode);
+void resetIfNoWifi();
+void myTimerEvent();
+#line 37 "/Users/me/0trabajo/gus/minimalistThermostat2023/src/minimalistthermostat.ino"
 #define USE_BLYNK
 
 /*******************************************************************************
@@ -47,9 +103,14 @@
 #include "FiniteStateMachine.h"
 #include "NCD4Relay.h"
 
+SerialLogHandler logHandler(115200, LOG_LEVEL_INFO);
+
+// Comment this out to disable prints and save space
+#define BLYNK_PRINT Serial
+
 #ifdef USE_BLYNK
-#include "blynk.h"
 #include "blynkAuthToken.h"
+#include <blynk.h>
 #endif
 
 #ifdef USE_OLED_DISPLAY
@@ -57,7 +118,7 @@
 #endif
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 0.30";
+String VERSION = "Version 1.01";
 // * BREAKING CHANGE in 0.27!!! DHT moved from D4 to D5
 
 /*******************************************************************************
@@ -135,7 +196,7 @@ String VERSION = "Version 0.30";
            * updated D0/D1/D2 to D1/D2/D3 since my photon's D0 is not behaving
            * Renaming to Heat/Cool from Heating/Cooling modes
  * changes in version 0.26:
-           * Particle build share link: https://go.particle.io/shared_apps/5a30567d31ef4463730008ad  
+           * Particle build share link: https://go.particle.io/shared_apps/5a30567d31ef4463730008ad
            * add multi thread support for photon: SYSTEM_THREAD(ENABLED);
            * adding support for ncd.io 4 relays board:
               https://store.ncd.io/product/4-channel-general-purpose-spdt-relay-shield-4-gpio-with-iot-interface/
@@ -155,8 +216,10 @@ String VERSION = "Version 0.30";
            * decreasing temp threshold from 0.10 to 0.05
  * changes in version 0.30:
            * increasing temp threshold from 0.05 to 0.20, otherwise the heat starts and stops too soon and often
+ * changes in version 1.01:
+           * update blynk to new blynk cloud
 
-                 
+
 TODO:
   * set max time for heating or cooling in 5 hours (alarm) or 6 hours (auto-shut-off)
   * #define STATE_FAN_ON "Fan On" -> the fan status should show up in the status
@@ -189,28 +252,28 @@ State heatingState = State(heatingEnterFunction, heatingUpdateFunction, heatingE
 State pulseState = State(pulseEnterFunction, pulseUpdateFunction, pulseExitFunction);
 State coolingState = State(coolingEnterFunction, coolingUpdateFunction, coolingExitFunction);
 
-//initialize state machine, start in state: Idle
+// initialize state machine, start in state: Idle
 FSM thermostatStateMachine = FSM(initState);
 
-//milliseconds for the init cycle, so temperature samples get stabilized
-//this should be in the order of the 5 minutes: 5*60*1000==300000
-//for now, I will use 1 minute
+// milliseconds for the init cycle, so temperature samples get stabilized
+// this should be in the order of the 5 minutes: 5*60*1000==300000
+// for now, I will use 1 minute
 #define INIT_TIMEOUT 60000
 elapsedMillis initTimer;
 
-//minimum number of milliseconds to leave the heating element on
-// to protect on-off on the fan and the heating/cooling elements
+// minimum number of milliseconds to leave the heating element on
+//  to protect on-off on the fan and the heating/cooling elements
 #define MINIMUM_ON_TIMEOUT 60000
 elapsedMillis minimumOnTimer;
 
-//minimum number of milliseconds to leave the system in idle state
-// to protect the fan and the heating/cooling elements
+// minimum number of milliseconds to leave the system in idle state
+//  to protect the fan and the heating/cooling elements
 #define MINIMUM_IDLE_TIMEOUT 60000
 elapsedMillis minimumIdleTimer;
 
-//milliseconds to pulse on the heating = 600 seconds = 10 minutes
-// turns the heating on for a certain time
-// comes in handy when you want to warm up the house a little bit
+// milliseconds to pulse on the heating = 600 seconds = 10 minutes
+//  turns the heating on for a certain time
+//  comes in handy when you want to warm up the house a little bit
 #define PULSE_TIMEOUT 600000
 elapsedMillis pulseTimer;
 
@@ -226,7 +289,7 @@ elapsedMillis pulseTimer;
 int fan = D1;
 int heat = D2;
 int cool = D3;
-//TESTING_HACK
+// TESTING_HACK
 int fanOutput;
 int heatOutput;
 int coolOutput;
@@ -244,8 +307,8 @@ bool bDHTstarted; // flag to indicate we started acquisition
 elapsedMillis dhtSampleInterval;
 // how many samples to take and average, more takes longer but measurement is smoother
 const int NUMBER_OF_SAMPLES = 10;
-//const float DUMMY = -100;
-//const float DUMMY_ARRAY[NUMBER_OF_SAMPLES] = { DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY };
+// const float DUMMY = -100;
+// const float DUMMY_ARRAY[NUMBER_OF_SAMPLES] = { DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY };
 #define DUMMY -100
 #define DUMMY_ARRAY {DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY, DUMMY};
 float temperatureSamples[NUMBER_OF_SAMPLES] = DUMMY_ARRAY;
@@ -254,28 +317,29 @@ float averageTemperature;
 /*******************************************************************************
  thermostat related declarations
 *******************************************************************************/
-//temperature related variables - internal
+// temperature related variables - internal
+float desiredTemp = 19.0; // coming from blynk
 float targetTemp = 19.0;
 float currentTemp = 20.0;
 float currentHumidity = 0.0;
 
-//you can change this to your liking
-// a smaller value will make your temperature more constant at the price of
-//  starting the heat more times
-// a larger value will reduce the number of times the HVAC comes on but will leave it on a longer time
+// you can change this to your liking
+//  a smaller value will make your temperature more constant at the price of
+//   starting the heat more times
+//  a larger value will reduce the number of times the HVAC comes on but will leave it on a longer time
 float margin = 0.20;
 
-//sensor difference with real temperature (if none set to zero)
-//use this variable to align measurements with your existing thermostat
+// sensor difference with real temperature (if none set to zero)
+// use this variable to align measurements with your existing thermostat
 float temperatureCalibration = -1.35;
 
-//temperature related variables - to be exposed in the cloud
-String targetTempString = String(targetTemp);           //String to store the target temp so it can be exposed and set
-String currentTempString = String(currentTemp);         //String to store the sensor's temp so it can be exposed
-String currentHumidityString = String(currentHumidity); //String to store the sensor's humidity so it can be exposed
+// temperature related variables - to be exposed in the cloud
+String targetTempString = String(targetTemp);           // String to store the target temp so it can be exposed and set
+String currentTempString = String(currentTemp);         // String to store the sensor's temp so it can be exposed
+String currentHumidityString = String(currentHumidity); // String to store the sensor's humidity so it can be exposed
 
 #define DEBOUNCE_SETTINGS 2000
-#define DEBOUNCE_SETTINGS_MODE 4000 //give more time to the MODE change
+#define DEBOUNCE_SETTINGS_MODE 4000 // give more time to the MODE change
 float newTargetTemp = 19.0;
 elapsedMillis setNewTargetTempTimer;
 
@@ -289,7 +353,7 @@ bool internalPulse = false;
 bool pulseButtonClick = false;
 elapsedMillis pulseButtonClickTimer;
 
-//here are the possible modes the thermostat can be in: off/heat/cool
+// here are the possible modes the thermostat can be in: off/heat/cool
 #define MODE_OFF "Off"
 #define MODE_HEAT "Heat"
 #define MODE_COOL "Cool"
@@ -298,7 +362,7 @@ String internalMode = MODE_OFF;
 bool modeButtonClick = false;
 elapsedMillis modeButtonClickTimer;
 
-//here are the possible states of the thermostat
+// here are the possible states of the thermostat
 #define STATE_INIT "Initializing"
 #define STATE_IDLE "Idle"
 #define STATE_HEATING "Heating"
@@ -313,14 +377,14 @@ String state = STATE_INIT;
 #define MILLISECONDS_TO_MINUTES 60000
 #define MILLISECONDS_TO_SECONDS 1000
 
-//TESTING_HACK
-// this allows me to system test the project
+// TESTING_HACK
+//  this allows me to system test the project
 bool testing = false;
 
 /*******************************************************************************
  Your blynk token goes in another file to avoid sharing it by mistake
   (like I did in one of my commits some time ago)
- The file containing your blynk auth token has to be named blynkAuthToken.h and it should 
+ The file containing your blynk auth token has to be named blynkAuthToken.h and it should
  contain something like this:
   #define BLYNK_AUTH_TOKEN "1234567890123456789012345678901234567890"
  replace with your project auth token (the blynk app will give you one)
@@ -328,38 +392,42 @@ bool testing = false;
 #ifdef USE_BLYNK
 char auth[] = BLYNK_AUTH_TOKEN;
 
-//definitions for the blynk interface
-#define BLYNK_DISPLAY_CURRENT_TEMP V0
-#define BLYNK_DISPLAY_HUMIDITY V1
-#define BLYNK_DISPLAY_TARGET_TEMP V2
-#define BLYNK_SLIDER_TEMP V10
+BlynkTimer timer;
 
-#define BLYNK_BUTTON_FAN V11
-#define BLYNK_LED_FAN V3
-#define BLYNK_LED_HEAT V4
-#define BLYNK_LED_COOL V5
+#define BLYNK_DISPLAY_CURRENT_TEMP V5
+#define BLYNK_DISPLAY_HUMIDITY V6
+#define BLYNK_DISPLAY_TARGET_TEMP V7
 
-#define BLYNK_DISPLAY_MODE V7
-#define BLYNK_BUTTON_MODE V8
-#define BLYNK_LED_PULSE V6
-#define BLYNK_BUTTON_PULSE V12
-#define BLYNK_DISPLAY_STATE V13
+// #define BLYNK_SLIDER_TEMP V10 // no more slider
+#define BLYNK_BUTTON_TEMP_LESS V1
+#define BLYNK_BUTTON_TEMP_PLUS V2
 
-//this is the remote temperature sensor
+#define BLYNK_LED_FAN V13
+// #define BLYNK_LED_HEAT V4
+// #define BLYNK_LED_COOL V5
+// #define BLYNK_LED_PULSE V6
+
+#define BLYNK_DISPLAY_MODE V9
+#define BLYNK_BUTTON_MODE V3
+#define BLYNK_BUTTON_PULSE V4
+#define BLYNK_BUTTON_FAN V0
+#define BLYNK_DISPLAY_STATE V10
+
+// this is the remote temperature sensor
 #define BLYNK_DISPLAY_CURRENT_TEMP_UPSTAIRS V9
 
-//this defines how often the readings are sent to the blynk cloud (millisecs)
+// this defines how often the readings are sent to the blynk cloud (millisecs)
 #define BLYNK_STORE_INTERVAL 5000
 elapsedMillis blynkStoreInterval;
 
-WidgetLED fanLed(BLYNK_LED_FAN);     //register led to virtual pin 3
-WidgetLED heatLed(BLYNK_LED_HEAT);   //register led to virtual pin 4
-WidgetLED coolLed(BLYNK_LED_COOL);   //register led to virtual pin 5
-WidgetLED pulseLed(BLYNK_LED_PULSE); //register led to virtual pin 6
+// WidgetLED fanLed(BLYNK_LED_FAN);     //register led to virtual pin 3
+// WidgetLED heatLed(BLYNK_LED_HEAT);   //register led to virtual pin 4
+// WidgetLED coolLed(BLYNK_LED_COOL);   //register led to virtual pin 5
+// WidgetLED pulseLed(BLYNK_LED_PULSE); //register led to virtual pin 6
 #endif
 
-//enable the user code (our program below) to run in parallel with cloud connectivity code
-// source: https://docs.particle.io/reference/firmware/photon/#system-thread
+// enable the user code (our program below) to run in parallel with cloud connectivity code
+//  source: https://docs.particle.io/reference/firmware/photon/#system-thread
 SYSTEM_THREAD(ENABLED);
 
 #ifdef USE_NCD_RELAYS
@@ -375,7 +443,7 @@ int turnOffRelay4AfterTime = 0;
 #ifdef USE_OLED_DISPLAY
 Adafruit_SSD1306 display(D4);
 
-//this defines how often the display is updated
+// this defines how often the display is updated
 #define OLED_UPDATE_INTERVAL 5000
 elapsedMillis oledUpdateInterval;
 int oledStep = 0;
@@ -386,9 +454,9 @@ int oledStep = 0;
  structure for writing thresholds in eeprom
  https://docs.particle.io/reference/firmware/photon/#eeprom
 *******************************************************************************/
-//randomly chosen value here. The only thing that matters is that it's not 255
-// since 255 is the default value for uninitialized eeprom
-// I used 137 and 138 in version 0.21 already
+// randomly chosen value here. The only thing that matters is that it's not 255
+//  since 255 is the default value for uninitialized eeprom
+//  I used 137 and 138 in version 0.21 already
 #define EEPROM_VERSION 139
 #define EEPROM_ADDRESS 0
 
@@ -419,7 +487,7 @@ elapsedMillis resetIfNoWifiInterval;
 void setup()
 {
 
-  //publish startup message with firmware version
+  // publish startup message with firmware version
   Particle.publish(APP_NAME, VERSION, 60, PRIVATE);
 
 #ifdef USE_NCD_RELAYS
@@ -431,7 +499,7 @@ void setup()
   Particle.function("relayStatus", relayStatus);
 
 #else
-  //declare and init pins
+  // declare and init pins
   pinMode(fan, OUTPUT);
   pinMode(heat, OUTPUT);
   pinMode(cool, OUTPUT);
@@ -459,18 +527,19 @@ void setup()
   Particle.function("setFan", setFan);
   // Particle.function("setPulse", setPulse);
 
-  //TESTING_HACK
+  // TESTING_HACK
   Particle.function("getOutputs", getOutputs);
   // Particle.function("setCurrTmp", setCurrentTemp);
   // Particle.function("setTesting", setTesting);
 
 #ifdef USE_BLYNK
   Blynk.begin(auth);
+  timer.setInterval(1000L, myTimerEvent);
 #endif
 
   Time.zone(TIME_ZONE);
 
-  //reset samples array to default so we fill it up with new samples
+  // reset samples array to default so we fill it up with new samples
   uint8_t i;
   for (i = 0; i < NUMBER_OF_SAMPLES; i++)
   {
@@ -481,7 +550,7 @@ void setup()
   setupDisplay();
 #endif
 
-  //restore settings from eeprom, if there were any saved before
+  // restore settings from eeprom, if there were any saved before
   readFromEeprom();
 }
 
@@ -495,16 +564,12 @@ void dht_wrapper() { DHT.isrCallback(); }
 void loop()
 {
 
-  //this function reads the temperature of the DHT sensor
+  // this function reads the temperature of the DHT sensor
   readTemperature();
 
 #ifdef USE_BLYNK
-  //all the Blynk magic happens here
+  // all the Blynk magic happens here
   Blynk.run();
-
-  //publish readings to the blynk server every minute so the History Graph gets updated
-  // even when the blynk app is not on (running) in the users phone
-  updateBlynkCloud();
 #endif
 
   updateTargetTemp();
@@ -516,19 +581,17 @@ void loop()
   updateDisplay();
 #endif
 
-  //this function updates the FSM
-  // the FSM is the heart of the thermostat - all actions are defined by its states
+  // this function updates the FSM
+  //  the FSM is the heart of the thermostat - all actions are defined by its states
   thermostatStateMachine.update();
 
-  //every now and then we save the settings
+  // every now and then we save the settings
   saveSettings();
 
 #if PLATFORM_ID == PLATFORM_PHOTON_PRODUCTION
-    resetIfNoWifi();
+  resetIfNoWifi();
 #endif
-
 }
-
 
 /*******************************************************************************/
 /*******************************************************************************/
@@ -561,7 +624,6 @@ int setFan(String newFan)
 
   // else parameter was invalid
   return -1;
-
 }
 
 /*******************************************************************************
@@ -573,11 +635,11 @@ int setFan(String newFan)
  *******************************************************************************/
 int setMode(String newMode)
 {
-  //mode: cycle through off->heating->cooling
-  // do this only when blynk sends a 1
-  // background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
-  // source: http://docs.blynk.cc/#widgets-controllers-button
-  if ( ( newMode != MODE_OFF) && ( newMode != MODE_HEAT) && ( newMode!= MODE_COOL ))
+  // mode: cycle through off->heating->cooling
+  //  do this only when blynk sends a 1
+  //  background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
+  //  source: http://docs.blynk.cc/#widgets-controllers-button
+  if ((newMode != MODE_OFF) && (newMode != MODE_HEAT) && (newMode != MODE_COOL))
   {
     return -1;
   }
@@ -585,7 +647,6 @@ int setMode(String newMode)
   externalMode = newMode;
   flagSettingsHaveChanged();
   return 0;
-
 }
 
 /*******************************************************************************
@@ -598,32 +659,30 @@ int setMode(String newMode)
 int setTargetTemp(String temp)
 {
   float tmpFloat = temp.toFloat();
-  //update the target temp only in the case the conversion to float works
-  // (toFloat returns 0 if there is a problem in the conversion)
-  // sorry, if you wanted to set 0 as the target temp, you can't :)
+  // update the target temp only in the case the conversion to float works
+  //  (toFloat returns 0 if there is a problem in the conversion)
+  //  sorry, if you wanted to set 0 as the target temp, you can't :)
   if ((tmpFloat > 0) && (tmpFloat > 14.9) && (tmpFloat < 31))
   {
-    //newTargetTemp will be copied to targetTemp moments after in function updateTargetTemp()
-    // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
+    // newTargetTemp will be copied to targetTemp moments after in function updateTargetTemp()
+    //  this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
     targetTemp = tmpFloat;
     targetTempString = float2string(targetTemp);
     flagSettingsHaveChanged();
     return 0;
   }
 
-  //show only 2 decimals in notifications
-  // Example: show 19.00 instead of 19.000000
+  // show only 2 decimals in notifications
+  //  Example: show 19.00 instead of 19.000000
   temp = temp.substring(0, temp.length() - 4);
 
-  //if the execution reaches here then the value was invalid
-  //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
-  //  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
+  // if the execution reaches here then the value was invalid
+  // Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
+  //   Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
   String tempStatus = "ERROR: Failed to set new target temp to " + temp + getTime();
   publishEvent(tempStatus);
   return -1;
 }
-
-
 
 /*******************************************************************************
  * Function Name  : setTargetTempInternal
@@ -638,26 +697,26 @@ int setTargetTemp(String temp)
 int setTargetTempInternal(String temp)
 {
   float tmpFloat = temp.toFloat();
-  //update the target temp only in the case the conversion to float works
-  // (toFloat returns 0 if there is a problem in the conversion)
-  // sorry, if you wanted to set 0 as the target temp, you can't :)
+  // update the target temp only in the case the conversion to float works
+  //  (toFloat returns 0 if there is a problem in the conversion)
+  //  sorry, if you wanted to set 0 as the target temp, you can't :)
   if ((tmpFloat > 0) && (tmpFloat > 14.9) && (tmpFloat < 31))
   {
-    //newTargetTemp will be copied to targetTemp moments after in function updateTargetTemp()
-    // this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
+    // newTargetTemp will be copied to targetTemp moments after in function updateTargetTemp()
+    //  this is to 1-debounce the blynk slider I use and 2-debounce the user changing his/her mind quickly
     newTargetTemp = tmpFloat;
-    //start timer to debounce this new setting
+    // start timer to debounce this new setting
     setNewTargetTempTimer = 0;
     return 0;
   }
 
-  //show only 2 decimals in notifications
-  // Example: show 19.00 instead of 19.000000
+  // show only 2 decimals in notifications
+  //  Example: show 19.00 instead of 19.000000
   temp = temp.substring(0, temp.length() - 4);
 
-  //if the execution reaches here then the value was invalid
-  //Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
-  //  Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
+  // if the execution reaches here then the value was invalid
+  // Particle.publish(APP_NAME, "ERROR: Failed to set new target temp to " + temp, 60, PRIVATE);
+  //   Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new target temp to " + temp + getTime(), 60, PRIVATE);
   String tempStatus = "ERROR: Failed to set new target temp to " + temp + getTime();
   publishEvent(tempStatus);
   return -1;
@@ -671,12 +730,12 @@ int setTargetTempInternal(String temp)
  *******************************************************************************/
 void updateTargetTemp()
 {
-  //debounce the new setting
+  // debounce the new setting
   if (setNewTargetTempTimer < DEBOUNCE_SETTINGS)
   {
     return;
   }
-  //is there anything to update?
+  // is there anything to update?
   if (targetTemp == newTargetTemp)
   {
     return;
@@ -685,8 +744,8 @@ void updateTargetTemp()
   targetTemp = newTargetTemp;
   targetTempString = float2string(targetTemp);
 
-  //Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
-  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New target temp: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
+  // Particle.publish(APP_NAME, "New target temp: " + targetTempString, 60, PRIVATE);
+  // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New target temp: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
   String tempStatus = "New target temp: " + targetTempString + "°C" + getTime();
   publishEvent(tempStatus);
 }
@@ -701,8 +760,8 @@ String float2string(float floatNumber)
 {
   String stringNumber = String(floatNumber);
 
-  //return only 2 decimals
-  // Example: show 19.00 instead of 19.000000
+  // return only 2 decimals
+  //  Example: show 19.00 instead of 19.000000
   stringNumber = stringNumber.substring(0, stringNumber.length() - 4);
 
   return stringNumber;
@@ -715,40 +774,40 @@ String float2string(float floatNumber)
  *******************************************************************************/
 void updateFanStatus()
 {
-  //if the button was not pressed, get out
+  // if the button was not pressed, get out
   if (not fanButtonClick)
   {
     return;
   }
 
-  //debounce the new setting
+  // debounce the new setting
   if (fanButtonClickTimer < DEBOUNCE_SETTINGS)
   {
     return;
   }
 
-  //reset flag of button pressed
+  // reset flag of button pressed
   fanButtonClick = false;
 
-  //is there anything to update?
-  // this code here takes care of the users having cycled the mode to the same original value
+  // is there anything to update?
+  //  this code here takes care of the users having cycled the mode to the same original value
   if (internalFan == externalFan)
   {
     return;
   }
 
-  //update the new setting from the external to the internal variable
+  // update the new setting from the external to the internal variable
   internalFan = externalFan;
 
   if (internalFan)
   {
-    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan on" + getTime(), 60, PRIVATE);
+    // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan on" + getTime(), 60, PRIVATE);
     String tempStatus = "Fan on" + getTime();
     publishEvent(tempStatus);
   }
   else
   {
-    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan off" + getTime(), 60, PRIVATE);
+    // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Fan off" + getTime(), 60, PRIVATE);
     String tempStatus = "Fan off" + getTime();
     publishEvent(tempStatus);
   }
@@ -762,40 +821,40 @@ void updateFanStatus()
  *******************************************************************************/
 void updatePulseStatus()
 {
-  //if the button was not pressed, get out
+  // if the button was not pressed, get out
   if (not pulseButtonClick)
   {
     return;
   }
 
-  //debounce the new setting
+  // debounce the new setting
   if (pulseButtonClickTimer < DEBOUNCE_SETTINGS)
   {
     return;
   }
 
-  //reset flag of button pressed
+  // reset flag of button pressed
   pulseButtonClick = false;
 
-  //is there anything to update?
-  // this code here takes care of the users having cycled the mode to the same original value
+  // is there anything to update?
+  //  this code here takes care of the users having cycled the mode to the same original value
   if (internalPulse == externalPulse)
   {
     return;
   }
 
-  //update only in the case the FSM state is idleState (the thermostat is doing nothing)
-  // or pulseState (a pulse is already running and the user wants to abort it)
+  // update only in the case the FSM state is idleState (the thermostat is doing nothing)
+  //  or pulseState (a pulse is already running and the user wants to abort it)
   if (not(thermostatStateMachine.isInState(idleState) or thermostatStateMachine.isInState(pulseState)))
   {
     Particle.publish(PUSHBULLET_NOTIF_HOME, "ERROR: You can only start a pulse in idle state" + getTime(), 60, PRIVATE);
 #ifdef USE_BLYNK
-    pulseLed.off();
+    // pulseLed.off();
 #endif
     return;
   }
 
-  //update the new setting from the external to the internal variable
+  // update the new setting from the external to the internal variable
   internalPulse = externalPulse;
 }
 
@@ -809,31 +868,31 @@ void updatePulseStatus()
  *******************************************************************************/
 void updateMode()
 {
-  //if the mode button was not pressed, get out
+  // if the mode button was not pressed, get out
   if (not modeButtonClick)
   {
     return;
   }
 
-  //debounce the new setting
+  // debounce the new setting
   if (modeButtonClickTimer < DEBOUNCE_SETTINGS_MODE)
   {
     return;
   }
 
-  //reset flag of button pressed
+  // reset flag of button pressed
   modeButtonClick = false;
 
-  //is there anything to update?
-  // this code here takes care of the users having cycled the mode to the same original value
+  // is there anything to update?
+  //  this code here takes care of the users having cycled the mode to the same original value
   if (internalMode == externalMode)
   {
     return;
   }
 
-  //update the new mode from the external to the internal variable
+  // update the new mode from the external to the internal variable
   internalMode = externalMode;
-  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Mode set to " + internalMode + getTime(), 60, PRIVATE);
+  // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Mode set to " + internalMode + getTime(), 60, PRIVATE);
   String tempStatus = "Mode set to " + internalMode + getTime();
   publishEvent(tempStatus);
 }
@@ -847,20 +906,20 @@ void updateMode()
 int readTemperature()
 {
 
-  //TESTING_HACK
-  //are we testing the app? then no need to acquire from the sensor
+  // TESTING_HACK
+  // are we testing the app? then no need to acquire from the sensor
   if (testing)
   {
     return 0;
   }
 
-  //time is up? no, then come back later
+  // time is up? no, then come back later
   if (dhtSampleInterval < DHT_SAMPLE_INTERVAL)
   {
     return 0;
   }
 
-  //time is up, reset timer
+  // time is up, reset timer
   dhtSampleInterval = 0;
 
   // start the sample
@@ -870,31 +929,31 @@ int readTemperature()
     bDHTstarted = true;
   }
 
-  //still acquiring sample? go away and come back later
+  // still acquiring sample? go away and come back later
   if (DHT.acquiring())
   {
     return 0;
   }
 
-  //I observed my dht22 measuring below 0 from time to time, so let's discard that sample
+  // I observed my dht22 measuring below 0 from time to time, so let's discard that sample
   if (DHT.getCelsius() < 0)
   {
-    //reset the sample flag so we can take another
+    // reset the sample flag so we can take another
     bDHTstarted = false;
     return 0;
   }
 
-  //valid sample acquired, adjust DHT difference if any
+  // valid sample acquired, adjust DHT difference if any
   float tmpTemperature = (float)DHT.getCelsius();
   tmpTemperature = tmpTemperature + temperatureCalibration;
 
   //------------------------------------------------------------------
-  //let's make an average of the measured temperature
+  // let's make an average of the measured temperature
   // by taking N samples
   uint8_t i;
   for (i = 0; i < NUMBER_OF_SAMPLES; i++)
   {
-    //store the sample in the next available 'slot' in the array of samples
+    // store the sample in the next available 'slot' in the array of samples
     if (temperatureSamples[i] == DUMMY)
     {
       temperatureSamples[i] = tmpTemperature;
@@ -902,7 +961,7 @@ int readTemperature()
     }
   }
 
-  //is the samples array full? if not, exit and get a new sample
+  // is the samples array full? if not, exit and get a new sample
   if (temperatureSamples[NUMBER_OF_SAMPLES - 1] == DUMMY)
   {
     return 0;
@@ -916,17 +975,17 @@ int readTemperature()
   }
   averageTemperature /= NUMBER_OF_SAMPLES;
 
-  //reset samples array to default so we fill it up again with new samples
+  // reset samples array to default so we fill it up again with new samples
   for (i = 0; i < NUMBER_OF_SAMPLES; i++)
   {
     temperatureSamples[i] = DUMMY;
   }
   //------------------------------------------------------------------
 
-  //sample acquired and averaged - go ahead and store temperature and humidity in internal variables
+  // sample acquired and averaged - go ahead and store temperature and humidity in internal variables
   publishTemperature(averageTemperature, (float)DHT.getHumidity());
 
-  //reset the sample flag so we can take another
+  // reset the sample flag so we can take another
   bDHTstarted = false;
 
   return 0;
@@ -951,11 +1010,11 @@ int publishTemperature(float temperature, float humidity)
   int currentHumidityDecimals = (currentHumidity - (int)currentHumidity) * 100;
   sprintf(currentHumidityChar, "%0d.%d", (int)currentHumidity, currentHumidityDecimals);
 
-  //publish readings into exposed variables
+  // publish readings into exposed variables
   currentTempString = String(currentTempChar);
   currentHumidityString = String(currentHumidityChar);
 
-  //publish readings
+  // publish readings
   Particle.publish(APP_NAME, currentTempString + "°C " + currentHumidityString + "%", 60, PRIVATE);
 
   return 0;
@@ -970,14 +1029,14 @@ int publishTemperature(float temperature, float humidity)
 *******************************************************************************/
 void initEnterFunction()
 {
-  //start the timer of this cycle
+  // start the timer of this cycle
   initTimer = 0;
-  //set the state
+  // set the state
   setState(STATE_INIT);
 }
 void initUpdateFunction()
 {
-  //time is up?
+  // time is up?
   if (initTimer > INIT_TIMEOUT)
   {
     thermostatStateMachine.transitionTo(idleState);
@@ -990,10 +1049,10 @@ void initExitFunction()
 
 void idleEnterFunction()
 {
-  //set the state
+  // set the state
   setState(STATE_IDLE);
 
-  //turn off the fan only if fan was not set on manually by the user
+  // turn off the fan only if fan was not set on manually by the user
   if (internalFan == false)
   {
     myDigitalWrite(fan, LOW);
@@ -1001,31 +1060,31 @@ void idleEnterFunction()
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, LOW);
 
-  //start the minimum timer of this cycle
+  // start the minimum timer of this cycle
   minimumIdleTimer = 0;
 }
 void idleUpdateFunction()
 {
-  //set the fan output to the internalFan ONLY in this state of the FSM
-  // since other states might need the fan on
-  //set it off only if it was on and internalFan changed to false
+  // set the fan output to the internalFan ONLY in this state of the FSM
+  //  since other states might need the fan on
+  // set it off only if it was on and internalFan changed to false
   if (internalFan == false and fanOutput == HIGH)
   {
     myDigitalWrite(fan, LOW);
   }
-  //set it on only if it was off and internalFan changed to true
+  // set it on only if it was off and internalFan changed to true
   if (internalFan == true and fanOutput == LOW)
   {
     myDigitalWrite(fan, HIGH);
   }
 
-  //is minimum time up? not yet, so get out of here
+  // is minimum time up? not yet, so get out of here
   if (minimumIdleTimer < MINIMUM_IDLE_TIMEOUT)
   {
     return;
   }
 
-  //if the thermostat is OFF, there is not much to do
+  // if the thermostat is OFF, there is not much to do
   if (internalMode == MODE_OFF)
   {
     if (internalPulse)
@@ -1036,10 +1095,10 @@ void idleUpdateFunction()
     return;
   }
 
-  //are we heating?
+  // are we heating?
   if (internalMode == MODE_HEAT)
   {
-    //if the temperature is lower than the target, transition to heatingState
+    // if the temperature is lower than the target, transition to heatingState
     if (currentTemp <= (targetTemp - margin))
     {
       thermostatStateMachine.transitionTo(heatingState);
@@ -1050,10 +1109,10 @@ void idleUpdateFunction()
     }
   }
 
-  //are we cooling?
+  // are we cooling?
   if (internalMode == MODE_COOL)
   {
-    //if the temperature is higher than the target, transition to coolingState
+    // if the temperature is higher than the target, transition to coolingState
     if (currentTemp > (targetTemp + margin))
     {
       thermostatStateMachine.transitionTo(coolingState);
@@ -1070,37 +1129,37 @@ void idleExitFunction()
 
 void heatingEnterFunction()
 {
-  //set the state
+  // set the state
   setState(STATE_HEATING);
 
-  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat on" + getTime(), 60, PRIVATE);
+  // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat on" + getTime(), 60, PRIVATE);
   String tempStatus = "Heat on" + getTime();
   publishEvent(tempStatus);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, HIGH);
   myDigitalWrite(cool, LOW);
 
-  //start the minimum timer of this cycle
+  // start the minimum timer of this cycle
   minimumOnTimer = 0;
 }
 void heatingUpdateFunction()
 {
-  //is minimum time up?
+  // is minimum time up?
   if (minimumOnTimer < MINIMUM_ON_TIMEOUT)
   {
-    //not yet, so get out of here
+    // not yet, so get out of here
     return;
   }
 
   if (currentTemp >= (targetTemp + margin))
   {
-    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
+    // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
     String tempStatus = "Desired temperature reached: " + targetTempString + "°C" + getTime();
     publishEvent(tempStatus);
     thermostatStateMachine.transitionTo(idleState);
   }
 
-  //was the mode changed by the user? if so, go back to idleState
+  // was the mode changed by the user? if so, go back to idleState
   if (internalMode != MODE_HEAT)
   {
     thermostatStateMachine.transitionTo(idleState);
@@ -1108,7 +1167,7 @@ void heatingUpdateFunction()
 }
 void heatingExitFunction()
 {
-  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat off" + getTime(), 60, PRIVATE);
+  // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Heat off" + getTime(), 60, PRIVATE);
   String tempStatus = "Heat off" + getTime();
   publishEvent(tempStatus);
   myDigitalWrite(fan, LOW);
@@ -1123,7 +1182,7 @@ void heatingExitFunction()
  *******************************************************************************/
 void pulseEnterFunction()
 {
-  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse on" + getTime(), 60, PRIVATE);
+  // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse on" + getTime(), 60, PRIVATE);
   String tempStatus = "Pulse on" + getTime();
   publishEvent(tempStatus);
   if (internalMode == MODE_HEAT)
@@ -1131,7 +1190,7 @@ void pulseEnterFunction()
     myDigitalWrite(fan, HIGH);
     myDigitalWrite(heat, HIGH);
     myDigitalWrite(cool, LOW);
-    //set the state
+    // set the state
     setState(STATE_PULSE_HEAT);
   }
   else if (internalMode == MODE_COOL)
@@ -1139,30 +1198,30 @@ void pulseEnterFunction()
     myDigitalWrite(fan, HIGH);
     myDigitalWrite(heat, LOW);
     myDigitalWrite(cool, HIGH);
-    //set the state
+    // set the state
     setState(STATE_PULSE_COOL);
   }
-  //start the timer of this cycle
+  // start the timer of this cycle
   pulseTimer = 0;
 
-  //start the minimum timer of this cycle
+  // start the minimum timer of this cycle
   minimumOnTimer = 0;
 }
 void pulseUpdateFunction()
 {
-  //is minimum time up? if not, get out of here
+  // is minimum time up? if not, get out of here
   if (minimumOnTimer < MINIMUM_ON_TIMEOUT)
   {
     return;
   }
 
-  //if the pulse was canceled by the user, transition to idleState
+  // if the pulse was canceled by the user, transition to idleState
   if (not internalPulse)
   {
     thermostatStateMachine.transitionTo(idleState);
   }
 
-  //is the time up for the pulse? if not, get out of here
+  // is the time up for the pulse? if not, get out of here
   if (pulseTimer < PULSE_TIMEOUT)
   {
     return;
@@ -1173,7 +1232,7 @@ void pulseUpdateFunction()
 void pulseExitFunction()
 {
   internalPulse = false;
-  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse off" + getTime(), 60, PRIVATE);
+  // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Pulse off" + getTime(), 60, PRIVATE);
   String tempStatus = "Pulse off" + getTime();
   publishEvent(tempStatus);
   myDigitalWrite(fan, LOW);
@@ -1181,7 +1240,7 @@ void pulseExitFunction()
   myDigitalWrite(cool, LOW);
 
 #ifdef USE_BLYNK
-  pulseLed.off();
+  // pulseLed.off();
 #endif
 }
 
@@ -1191,37 +1250,37 @@ void pulseExitFunction()
  *******************************************************************************/
 void coolingEnterFunction()
 {
-  //set the state
+  // set the state
   setState(STATE_COOLING);
 
-  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool on" + getTime(), 60, PRIVATE);
+  // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool on" + getTime(), 60, PRIVATE);
   String tempStatus = "Cool on" + getTime();
   publishEvent(tempStatus);
   myDigitalWrite(fan, HIGH);
   myDigitalWrite(heat, LOW);
   myDigitalWrite(cool, HIGH);
 
-  //start the minimum timer of this cycle
+  // start the minimum timer of this cycle
   minimumOnTimer = 0;
 }
 void coolingUpdateFunction()
 {
-  //is minimum time up?
+  // is minimum time up?
   if (minimumOnTimer < MINIMUM_ON_TIMEOUT)
   {
-    //not yet, so get out of here
+    // not yet, so get out of here
     return;
   }
 
   if (currentTemp <= (targetTemp - margin))
   {
-    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
+    // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Desired temperature reached: " + targetTempString + "°C" + getTime(), 60, PRIVATE);
     String tempStatus = "Desired temperature reached: " + targetTempString + "°C" + getTime();
     publishEvent(tempStatus);
     thermostatStateMachine.transitionTo(idleState);
   }
 
-  //was the mode changed by the user? if so, go back to idleState
+  // was the mode changed by the user? if so, go back to idleState
   if (internalMode != MODE_COOL)
   {
     thermostatStateMachine.transitionTo(idleState);
@@ -1229,7 +1288,7 @@ void coolingUpdateFunction()
 }
 void coolingExitFunction()
 {
-  //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool off" + getTime(), 60, PRIVATE);
+  // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "Cool off" + getTime(), 60, PRIVATE);
   String tempStatus = "Cool off" + getTime();
   publishEvent(tempStatus);
   myDigitalWrite(fan, LOW);
@@ -1291,27 +1350,27 @@ int setCurrentTemp(String newCurrentTemp)
 {
   float tmpFloat = newCurrentTemp.toFloat();
 
-  //update the current temp only in the case the conversion to float works
-  // (toFloat returns 0 if there is a problem in the conversion)
-  // sorry, if you wanted to set 0 as the current temp, you can't :)
+  // update the current temp only in the case the conversion to float works
+  //  (toFloat returns 0 if there is a problem in the conversion)
+  //  sorry, if you wanted to set 0 as the current temp, you can't :)
   if (tmpFloat > 0)
   {
     currentTemp = tmpFloat;
     currentTempString = String(currentTemp);
 
-    //show only 2 decimals in notifications
-    // Example: show 19.00 instead of 19.000000
+    // show only 2 decimals in notifications
+    //  Example: show 19.00 instead of 19.000000
     currentTempString = currentTempString.substring(0, currentTempString.length() - 4);
 
-    //Particle.publish(APP_NAME, "New current temp: " + currentTempString, 60, PRIVATE);
-    //Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New current temp: " + currentTempString + getTime(), 60, PRIVATE);
+    // Particle.publish(APP_NAME, "New current temp: " + currentTempString, 60, PRIVATE);
+    // Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "New current temp: " + currentTempString + getTime(), 60, PRIVATE);
     String tempStatus = "New current temp: " + currentTempString + getTime();
     publishEvent(tempStatus);
     return 0;
   }
   else
   {
-    //Particle.publish(APP_NAME, "ERROR: Failed to set new current temp to " + newCurrentTemp, 60, PRIVATE);
+    // Particle.publish(APP_NAME, "ERROR: Failed to set new current temp to " + newCurrentTemp, 60, PRIVATE);
     Particle.publish(PUSHBULLET_NOTIF_PERSONAL, "ERROR: Failed to set new current temp to " + newCurrentTemp + getTime(), 60, PRIVATE);
     return -1;
   }
@@ -1348,7 +1407,7 @@ void myDigitalWrite(int input, int status)
     Particle.publish("DEBUG fan", String(status), 60, PRIVATE);
 
 #ifdef USE_BLYNK
-    BLYNK_setFanLed(status);
+    // BLYNK_setFanLed(status);
 #endif
   }
 
@@ -1356,7 +1415,7 @@ void myDigitalWrite(int input, int status)
   {
     heatOutput = status;
 #ifdef USE_BLYNK
-    BLYNK_setHeatLed(status);
+    // BLYNK_setHeatLed(status);
 #endif
   }
 
@@ -1364,7 +1423,7 @@ void myDigitalWrite(int input, int status)
   {
     coolOutput = status;
 #ifdef USE_BLYNK
-    BLYNK_setCoolLed(status);
+    // BLYNK_setCoolLed(status);
 #endif
   }
 }
@@ -1421,320 +1480,18 @@ int convertPinToRelay(int pin)
 
   switch (pin)
   {
-  case 1: //fan:
+  case 1: // fan:
     return 1;
     break;
-  case 2: //heat:
+  case 2: // heat:
     return 2;
     break;
-  case 3: //cool:
+  case 3: // cool:
     return 3;
     break;
   }
   return 0;
 }
-
-/*******************************************************************************/
-/*******************************************************************************/
-/*******************          BLYNK FUNCTIONS         **************************/
-/*******************************************************************************/
-/*******************************************************************************/
-
-// only include blynk related code if you are using blynk
-#ifdef USE_BLYNK
-
-/*******************************************************************************
- * Function Name  : BLYNK_READ
- * Description    : these functions are called by blynk when the blynk app wants
- to read values from the photon
- source: http://docs.blynk.cc/#blynk-main-operations-get-data-from-hardware
- *******************************************************************************/
-BLYNK_READ(BLYNK_DISPLAY_CURRENT_TEMP)
-{
-  //this is a blynk value display
-  // source: http://docs.blynk.cc/#widgets-displays-value-display
-  Blynk.virtualWrite(BLYNK_DISPLAY_CURRENT_TEMP, currentTemp);
-}
-BLYNK_READ(BLYNK_DISPLAY_HUMIDITY)
-{
-  //this is a blynk value display
-  // source: http://docs.blynk.cc/#widgets-displays-value-display
-  Blynk.virtualWrite(BLYNK_DISPLAY_HUMIDITY, currentHumidity);
-}
-BLYNK_READ(BLYNK_DISPLAY_TARGET_TEMP)
-{
-  //this is a blynk value display
-  // source: http://docs.blynk.cc/#widgets-displays-value-display
-  Blynk.virtualWrite(BLYNK_DISPLAY_TARGET_TEMP, targetTemp);
-}
-BLYNK_READ(BLYNK_LED_FAN)
-{
-  //this is a blynk led
-  // source: http://docs.blynk.cc/#widgets-displays-led
-  if (externalFan)
-  {
-    fanLed.on();
-  }
-  else
-  {
-    fanLed.off();
-  }
-}
-BLYNK_READ(BLYNK_LED_PULSE)
-{
-  //this is a blynk led
-  // source: http://docs.blynk.cc/#widgets-displays-led
-  if (externalPulse)
-  {
-    pulseLed.on();
-  }
-  else
-  {
-    pulseLed.off();
-  }
-}
-BLYNK_READ(BLYNK_LED_HEAT)
-{
-  //this is a blynk led
-  // source: http://docs.blynk.cc/#widgets-displays-led
-  if (heatOutput)
-  {
-    heatLed.on();
-  }
-  else
-  {
-    heatLed.off();
-  }
-}
-BLYNK_READ(BLYNK_LED_COOL)
-{
-  //this is a blynk led
-  // source: http://docs.blynk.cc/#widgets-displays-led
-  if (coolOutput)
-  {
-    coolLed.on();
-  }
-  else
-  {
-    coolLed.off();
-  }
-}
-BLYNK_READ(BLYNK_DISPLAY_MODE)
-{
-  Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
-}
-BLYNK_READ(BLYNK_DISPLAY_STATE)
-{
-  Blynk.virtualWrite(BLYNK_DISPLAY_STATE, state);
-}
-
-/*******************************************************************************
- * Function Name  : BLYNK_WRITE
- * Description    : these functions are called by blynk when the blynk app wants
-                     to write values to the photon
-                    source: http://docs.blynk.cc/#blynk-main-operations-send-data-from-app-to-hardware
- *******************************************************************************/
-BLYNK_WRITE(BLYNK_SLIDER_TEMP)
-{
-  //this is the blynk slider
-  // source: http://docs.blynk.cc/#widgets-controllers-slider
-  setTargetTempInternal(param.asStr());
-  flagSettingsHaveChanged();
-}
-
-BLYNK_WRITE(BLYNK_BUTTON_FAN)
-{
-  //flip fan status, if it's on switch it off and viceversa
-  // do this only when blynk sends a 1
-  // background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
-  // source: http://docs.blynk.cc/#widgets-controllers-button
-  if (param.asInt() == 1)
-  {
-    externalFan = not externalFan;
-    //start timer to debounce this new setting
-    fanButtonClickTimer = 0;
-    //flag that the button was clicked
-    fanButtonClick = true;
-    //update the led
-    if (externalFan)
-    {
-      fanLed.on();
-    }
-    else
-    {
-      fanLed.off();
-    }
-
-    flagSettingsHaveChanged();
-  }
-}
-
-BLYNK_WRITE(BLYNK_BUTTON_PULSE)
-{
-  //flip pulse status, if it's on switch it off and viceversa
-  // do this only when blynk sends a 1
-  // background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
-  // source: http://docs.blynk.cc/#widgets-controllers-button
-  if (param.asInt() == 1)
-  {
-    externalPulse = not externalPulse;
-    //start timer to debounce this new setting
-    pulseButtonClickTimer = 0;
-    //flag that the button was clicked
-    pulseButtonClick = true;
-    //update the pulse led
-    if (externalPulse)
-    {
-      pulseLed.on();
-    }
-    else
-    {
-      pulseLed.off();
-    }
-  }
-}
-
-BLYNK_WRITE(BLYNK_BUTTON_MODE)
-{
-  //mode: cycle through off->heating->cooling
-  // do this only when blynk sends a 1
-  // background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
-  // source: http://docs.blynk.cc/#widgets-controllers-button
-  if (param.asInt() == 1)
-  {
-    if (externalMode == MODE_OFF)
-    {
-      externalMode = MODE_HEAT;
-    }
-    else if (externalMode == MODE_HEAT)
-    {
-      externalMode = MODE_COOL;
-    }
-    else if (externalMode == MODE_COOL)
-    {
-      externalMode = MODE_OFF;
-    }
-    else
-    {
-      externalMode = MODE_OFF;
-    }
-
-    //start timer to debounce this new setting
-    modeButtonClickTimer = 0;
-    //flag that the button was clicked
-    modeButtonClick = true;
-    //update the mode indicator
-    Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
-
-    flagSettingsHaveChanged();
-  }
-}
-
-/*******************************************************************************
- * Function Name  : BLYNK_setXxxLed
- * Description    : these functions are called by our program to update the status
-                    of the leds in the blynk cloud and the blynk app
-                    source: http://docs.blynk.cc/#blynk-main-operations-send-data-from-app-to-hardware
-*******************************************************************************/
-void BLYNK_setFanLed(int status)
-{
-  if (status)
-  {
-    fanLed.on();
-  }
-  else
-  {
-    fanLed.off();
-  }
-}
-
-void BLYNK_setHeatLed(int status)
-{
-  if (status)
-  {
-    heatLed.on();
-  }
-  else
-  {
-    heatLed.off();
-  }
-}
-
-void BLYNK_setCoolLed(int status)
-{
-  if (status)
-  {
-    coolLed.on();
-  }
-  else
-  {
-    coolLed.off();
-  }
-}
-
-// BLYNK_CONNECTED() {
-//   Blynk.syncVirtual(BLYNK_DISPLAY_CURRENT_TEMP);
-//   Blynk.syncVirtual(BLYNK_DISPLAY_HUMIDITY);
-//   Blynk.syncVirtual(BLYNK_DISPLAY_TARGET_TEMP);
-//   Blynk.syncVirtual(BLYNK_LED_FAN);
-//   Blynk.syncVirtual(BLYNK_LED_HEAT);
-//   Blynk.syncVirtual(BLYNK_LED_COOL);
-//   Blynk.syncVirtual(BLYNK_LED_PULSE);
-//   Blynk.syncVirtual(BLYNK_DISPLAY_MODE);
-//   // BLYNK_setFanLed(fan);
-//   // BLYNK_setHeatLed(heat);
-//   // BLYNK_setCoolLed(cool);
-//
-//   //update the mode and state indicator
-//   Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
-//   Blynk.virtualWrite(BLYNK_DISPLAY_STATE, state);
-// }
-
-/*******************************************************************************
- * Function Name  : updateBlynkCloud
- * Description    : publish readings to the blynk server every minute so the
-                    History Graph gets updated even when
-                    the blynk app is not on (running) in the users phone
- * Return         : none
- *******************************************************************************/
-void updateBlynkCloud()
-{
-
-  //is it time to store in the blynk cloud? if so, do it
-  if (blynkStoreInterval > BLYNK_STORE_INTERVAL)
-  {
-
-    //reset timer
-    blynkStoreInterval = 0;
-
-    //do not write the temp while the thermostat is initializing
-    if (not thermostatStateMachine.isInState(initState))
-    {
-      Blynk.virtualWrite(BLYNK_DISPLAY_CURRENT_TEMP, currentTemp);
-      Blynk.virtualWrite(BLYNK_DISPLAY_HUMIDITY, currentHumidity);
-    }
-
-    Blynk.virtualWrite(BLYNK_DISPLAY_TARGET_TEMP, targetTemp);
-
-    if (externalPulse)
-    {
-      pulseLed.on();
-    }
-    else
-    {
-      pulseLed.off();
-    }
-
-    BLYNK_setFanLed(externalFan);
-    BLYNK_setHeatLed(heatOutput);
-    BLYNK_setCoolLed(coolOutput);
-
-    //update the mode and state indicator
-    Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
-    Blynk.virtualWrite(BLYNK_DISPLAY_STATE, state);
-  }
-}
-#endif
 
 /*******************************************************************************/
 /*******************************************************************************/
@@ -1787,24 +1544,24 @@ int triggerRelay(String command)
   int timeOn = 0;
   int relayNumber1 = 0;
 
-  //parse the first relay number
+  // parse the first relay number
   if (firstCharIsNumber4(tempCommand))
   {
     relayNumber1 = tempCommand.substring(0, 1).toInt();
     Serial.print("relayNumber1: ");
     Serial.println(relayNumber1);
-    //then remove the first
+    // then remove the first
     tempCommand = tempCommand.substring(1);
   }
 
-  //check if next chars are equal to on, if so, check if there was a specific ON time sent
-  // it would be after the on
-  // example: 4on50 for turning relay 4 on for 50 minutes
-  // when the program reaches this point, 4 have already been parsed
-  // so here we would end up with on50
+  // check if next chars are equal to on, if so, check if there was a specific ON time sent
+  //  it would be after the on
+  //  example: 4on50 for turning relay 4 on for 50 minutes
+  //  when the program reaches this point, 4 have already been parsed
+  //  so here we would end up with on50
   if (tempCommand.startsWith("on"))
   {
-    //parse the digits after the on command
+    // parse the digits after the on command
     timeOn = tempCommand.substring(2).toInt();
     Serial.print("timeOn: ");
     Serial.println(timeOn);
@@ -1944,11 +1701,11 @@ void setupDisplay()
 void updateDisplay()
 {
 
-  //is it time to store in the blynk cloud? if so, do it
+  // is it time to store in the blynk cloud? if so, do it
   if (oledUpdateInterval > OLED_UPDATE_INTERVAL)
   {
 
-    //reset timer
+    // reset timer
     oledUpdateInterval = 0;
 
     display.clearDisplay();
@@ -2024,9 +1781,9 @@ void readFromEeprom()
   EepromMemoryStructure myObj;
   EEPROM.get(EEPROM_ADDRESS, myObj);
 
-  //verify this eeprom was written before
-  // if version is 255 it means the eeprom was never written in the first place, hence the
-  // data just read with the previous EEPROM.get() is invalid and we will ignore it
+  // verify this eeprom was written before
+  //  if version is 255 it means the eeprom was never written in the first place, hence the
+  //  data just read with the previous EEPROM.get() is invalid and we will ignore it
   if (myObj.version == EEPROM_VERSION)
   {
 
@@ -2037,7 +1794,7 @@ void readFromEeprom()
     internalMode = convertIntToMode(myObj.internalMode);
     externalMode = internalMode;
 
-    //these variables are false at boot
+    // these variables are false at boot
     if (myObj.internalFan == 1)
     {
       internalFan = true;
@@ -2060,29 +1817,29 @@ void readFromEeprom()
 void saveSettings()
 {
 
-  //if the thermostat is initializing, get out of here
+  // if the thermostat is initializing, get out of here
   if (thermostatStateMachine.isInState(initState))
   {
     return;
   }
 
-  //if no settings were changed, get out of here
+  // if no settings were changed, get out of here
   if (not settingsHaveChanged)
   {
     return;
   }
 
-  //if settings have changed, is it time to store them?
+  // if settings have changed, is it time to store them?
   if (settingsHaveChanged_timer < SAVE_SETTINGS_INTERVAL)
   {
     return;
   }
 
-  //reset timer
+  // reset timer
   settingsHaveChanged_timer = 0;
   settingsHaveChanged = false;
 
-  //store thresholds in the struct type that will be saved in the eeprom
+  // store thresholds in the struct type that will be saved in the eeprom
   eepromMemory.version = EEPROM_VERSION;
   eepromMemory.targetTemp = uint8_t(targetTemp);
   eepromMemory.internalMode = convertModeToInt(internalMode);
@@ -2093,7 +1850,7 @@ void saveSettings()
     eepromMemory.internalFan = 1;
   }
 
-  //then save
+  // then save
   EEPROM.put(EEPROM_ADDRESS, eepromMemory);
 
   // Particle.publish(APP_NAME, "stored:" + eepromMemory.internalMode + "-" + String(eepromMemory.internalFan) + "-" + String(eepromMemory.targetTemp) , 60, PRIVATE);
@@ -2116,7 +1873,7 @@ String convertIntToMode(uint8_t mode)
     return MODE_COOL;
   }
 
-  //in all other cases
+  // in all other cases
   return MODE_OFF;
 }
 
@@ -2136,7 +1893,7 @@ uint8_t convertModeToInt(String mode)
     return 2;
   }
 
-  //in all other cases
+  // in all other cases
   return 0;
 }
 
@@ -2148,25 +1905,138 @@ uint8_t convertModeToInt(String mode)
 void resetIfNoWifi()
 {
 
-    // never reset if it is connected to wifi
-    if (WiFi.ready())
-    {
-        Serial.println("wifi detected");
-        resetIfNoWifiInterval = 0;
-        return;
-    }
+  // never reset if it is connected to wifi
+  if (WiFi.ready())
+  {
+    Serial.println("wifi detected");
+    resetIfNoWifiInterval = 0;
+    return;
+  }
 
-    Serial.println("wifi not detected");
+  Serial.println("wifi not detected");
 
-    // is time up? no, then come back later
-    if (resetIfNoWifiInterval < RESET_IF_NO_WIFI)
-    {
-        return;
-    }
+  // is time up? no, then come back later
+  if (resetIfNoWifiInterval < RESET_IF_NO_WIFI)
+  {
+    return;
+  }
 
-    // it comes here if it was not connected to wifi for RESET_IF_NO_WIFI
-    Serial.println("Resetting device");
-    delay(1000);
-    System.reset();
+  // it comes here if it was not connected to wifi for RESET_IF_NO_WIFI
+  Serial.println("Resetting device");
+  delay(1000);
+  System.reset();
 }
 #endif
+
+void myTimerEvent()
+{
+  Blynk.virtualWrite(BLYNK_DISPLAY_CURRENT_TEMP, currentTemp);
+  Blynk.virtualWrite(BLYNK_DISPLAY_HUMIDITY, currentHumidity);
+  Blynk.virtualWrite(BLYNK_DISPLAY_STATE, state);
+  Blynk.virtualWrite(BLYNK_DISPLAY_TARGET_TEMP, desiredTemp);
+  Blynk.virtualWrite(BLYNK_LED_FAN, externalFan);
+  Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
+}
+
+// desired temp --
+BLYNK_WRITE(BLYNK_BUTTON_TEMP_LESS) // this command is listening when something is written to V1
+{
+  int pinValue = param.asInt(); // assigning incoming value from pin V1 to a variable
+  if (pinValue == 1)
+  {
+    desiredTemp = desiredTemp - 0.2;
+    if ((desiredTemp > 14.9) && (desiredTemp < 31))
+    {
+      newTargetTemp = desiredTemp;
+      // start timer to debounce this new setting
+      setNewTargetTempTimer = 0;
+      flagSettingsHaveChanged();
+    }
+    Log.info("decrease temp");
+    Blynk.virtualWrite(BLYNK_DISPLAY_TARGET_TEMP, desiredTemp);
+  }
+}
+// desired temp ++
+BLYNK_WRITE(BLYNK_BUTTON_TEMP_PLUS)
+{
+  int pinValue = param.asInt();
+  if (pinValue == 1)
+  {
+    desiredTemp = desiredTemp + 0.2;
+    if ((desiredTemp > 14.9) && (desiredTemp < 31))
+    {
+      newTargetTemp = desiredTemp;
+      // start timer to debounce this new setting
+      setNewTargetTempTimer = 0;
+      flagSettingsHaveChanged();
+    }
+    Blynk.virtualWrite(BLYNK_DISPLAY_TARGET_TEMP, desiredTemp);
+    Log.info("increase temp");
+  }
+}
+
+BLYNK_WRITE(BLYNK_BUTTON_PULSE)
+{
+  // flip pulse status, if it's on switch it off and viceversa
+  //  do this only when blynk sends a 1
+  if (param.asInt() == 1)
+  {
+    externalPulse = not externalPulse;
+    // start timer to debounce this new setting
+    pulseButtonClickTimer = 0;
+    // flag that the button was clicked
+    pulseButtonClick = true;
+  }
+}
+
+BLYNK_WRITE(BLYNK_BUTTON_FAN)
+{
+  if (param.asInt() == 1)
+  {
+    Log.info("fan button clicked");
+    externalFan = not externalFan;
+    // start timer to debounce this new setting
+    fanButtonClickTimer = 0;
+    // flag that the button was clicked
+    fanButtonClick = true;
+    // update the led
+    Blynk.virtualWrite(BLYNK_LED_FAN, externalFan);
+    flagSettingsHaveChanged();
+  }
+}
+
+BLYNK_WRITE(BLYNK_BUTTON_MODE)
+{
+  // mode: cycle through off->heating->cooling
+  //  do this only when blynk sends a 1
+  //  background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
+  //  source: http://docs.blynk.cc/#widgets-controllers-button
+  if (param.asInt() == 1)
+  {
+    if (externalMode == MODE_OFF)
+    {
+      externalMode = MODE_HEAT;
+    }
+    else if (externalMode == MODE_HEAT)
+    {
+      externalMode = MODE_COOL;
+    }
+    else if (externalMode == MODE_COOL)
+    {
+      externalMode = MODE_OFF;
+    }
+    else
+    {
+      externalMode = MODE_OFF;
+    }
+
+    // start timer to debounce this new setting
+    modeButtonClickTimer = 0;
+    // flag that the button was clicked
+    modeButtonClick = true;
+    // update the mode indicator
+    Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
+
+    flagSettingsHaveChanged();
+  }
+}
