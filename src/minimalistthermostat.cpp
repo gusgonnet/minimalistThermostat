@@ -457,7 +457,7 @@ int oledStep = 0;
 // randomly chosen value here. The only thing that matters is that it's not 255
 //  since 255 is the default value for uninitialized eeprom
 //  I used 137 and 138 in version 0.21 already
-#define EEPROM_VERSION 139
+#define EEPROM_VERSION 142
 #define EEPROM_ADDRESS 0
 
 struct EepromMemoryStructure
@@ -1787,7 +1787,7 @@ void readFromEeprom()
   if (myObj.version == EEPROM_VERSION)
   {
 
-    targetTemp = float(myObj.targetTemp);
+    targetTemp = float(myObj.targetTemp) / 100;
     newTargetTemp = targetTemp;
     targetTempString = float2string(targetTemp);
 
@@ -1802,7 +1802,7 @@ void readFromEeprom()
     }
 
     // Particle.publish(APP_NAME, "DEBUG: read settings from EEPROM: " + String(myObj.targetTemp)
-    Particle.publish(APP_NAME, "read:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp), 60, PRIVATE);
+    Particle.publish(APP_NAME, "read:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp) + "-" + String(myObj.targetTemp), 60, PRIVATE);
   }
 }
 
@@ -1841,7 +1841,7 @@ void saveSettings()
 
   // store thresholds in the struct type that will be saved in the eeprom
   eepromMemory.version = EEPROM_VERSION;
-  eepromMemory.targetTemp = uint8_t(targetTemp);
+  eepromMemory.targetTemp = targetTemp * 100;
   eepromMemory.internalMode = convertModeToInt(internalMode);
 
   eepromMemory.internalFan = 0;
@@ -1854,7 +1854,7 @@ void saveSettings()
   EEPROM.put(EEPROM_ADDRESS, eepromMemory);
 
   // Particle.publish(APP_NAME, "stored:" + eepromMemory.internalMode + "-" + String(eepromMemory.internalFan) + "-" + String(eepromMemory.targetTemp) , 60, PRIVATE);
-  Particle.publish(APP_NAME, "stored:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp), 60, PRIVATE);
+  Particle.publish(APP_NAME, "stored:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp) + "-" + String(eepromMemory.targetTemp), 60, PRIVATE);
 }
 
 /*******************************************************************************

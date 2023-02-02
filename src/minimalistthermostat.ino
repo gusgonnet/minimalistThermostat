@@ -401,13 +401,13 @@ int oledStep = 0;
 // randomly chosen value here. The only thing that matters is that it's not 255
 //  since 255 is the default value for uninitialized eeprom
 //  I used 137 and 138 in version 0.21 already
-#define EEPROM_VERSION 139
+#define EEPROM_VERSION 146
 #define EEPROM_ADDRESS 0
 
 struct EepromMemoryStructure
 {
   uint8_t version = EEPROM_VERSION;
-  uint8_t targetTemp;
+  float targetTemp;
   uint8_t internalFan;
   uint8_t internalMode;
 };
@@ -1731,8 +1731,8 @@ void readFromEeprom()
   if (myObj.version == EEPROM_VERSION)
   {
 
-    desiredTemp = float(myObj.targetTemp);
-    targetTemp = float(myObj.targetTemp);
+    targetTemp = myObj.targetTemp;
+    desiredTemp = targetTemp;
     newTargetTemp = targetTemp;
     targetTempString = float2string(targetTemp);
 
@@ -1786,7 +1786,7 @@ void saveSettings()
 
   // store thresholds in the struct type that will be saved in the eeprom
   eepromMemory.version = EEPROM_VERSION;
-  eepromMemory.targetTemp = uint8_t(targetTemp);
+  eepromMemory.targetTemp = targetTemp;
   eepromMemory.internalMode = convertModeToInt(internalMode);
 
   eepromMemory.internalFan = 0;
