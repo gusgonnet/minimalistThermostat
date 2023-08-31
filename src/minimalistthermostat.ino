@@ -62,7 +62,7 @@ SerialLogHandler logHandler(115200, LOG_LEVEL_INFO);
 #endif
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 1.01";
+String VERSION = "Version 1.02";
 // * BREAKING CHANGE in 0.27!!! DHT moved from D4 to D5
 
 /*******************************************************************************
@@ -162,6 +162,9 @@ String VERSION = "Version 1.01";
            * increasing temp threshold from 0.05 to 0.20, otherwise the heat starts and stops too soon and often
  * changes in version 1.01:
            * update blynk to new blynk cloud
+ * changes in version 1.02:
+           * send garage open/close via particle publish/subscribe
+           * receive downstairs temp via particle publish/subscribe
 
 
 TODO:
@@ -360,6 +363,8 @@ BlynkTimer timer;
 // this is the remote temperature sensor
 #define BLYNK_DISPLAY_CURRENT_TEMP_UPSTAIRS V9
 
+#define BLYNK_GARAGE_BUTTON V14
+
 // this defines how often the readings are sent to the blynk cloud (millisecs)
 #define BLYNK_STORE_INTERVAL 5000
 elapsedMillis blynkStoreInterval;
@@ -423,6 +428,14 @@ ApplicationWatchdog wd(120000, System.reset);
 
 #define RESET_IF_NO_WIFI 120000
 elapsedMillis resetIfNoWifiInterval;
+
+float downstairsTemp = 0;
+
+void myHandler(const char *event, const char *data)
+{
+  // convert data into a float
+  downstairsTemp = atof(data);
+}
 
 /*******************************************************************************
  * Function Name  : setup
@@ -496,6 +509,8 @@ void setup()
 
   // restore settings from eeprom, if there were any saved before
   readFromEeprom();
+
+  Particle.subscribe("DownStairs_Temp", myHandler);
 }
 
 // This wrapper is in charge of calling the DHT sensor lib
@@ -1881,6 +1896,7 @@ void myTimerEvent()
   Blynk.virtualWrite(BLYNK_DISPLAY_TARGET_TEMP, desiredTemp);
   Blynk.virtualWrite(BLYNK_LED_FAN, externalFan);
   Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
+  Blynk.virtualWrite(V8, downstairsTemp);
 }
 
 // desired temp --
@@ -1983,5 +1999,19 @@ BLYNK_WRITE(BLYNK_BUTTON_MODE)
     Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
 
     flagSettingsHaveChanged();
+  }
+}
+
+BLYNK_WRITE(BLYNK_GARAGE_BUTTON)
+{
+  // open the garage only when blynk sends a 1, after the user presses for more than one second
+  // to avoid opening the garage by mistake
+  // background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
+  // source: http://docs.blynk.cc/#widgets-controllers-button
+
+  // this means the button has been pressed
+  if (param.asInt() == 1)
+  {
+    Particle.publish("Open_My_Garage", "Open_My_Garage", 60, PRIVATE);
   }
 }

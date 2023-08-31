@@ -40,6 +40,7 @@
  Here you decide if you want to use Blynk or not by
  commenting this line "#define USE_BLYNK" (or not)
 *******************************************************************************/
+void myHandler(const char *event, const char *data);
 void setup();
 void loop();
 int setFan(String newFan);
@@ -118,7 +119,7 @@ SerialLogHandler logHandler(115200, LOG_LEVEL_INFO);
 #endif
 
 #define APP_NAME "Thermostat"
-String VERSION = "Version 1.01";
+String VERSION = "Version 1.02";
 // * BREAKING CHANGE in 0.27!!! DHT moved from D4 to D5
 
 /*******************************************************************************
@@ -218,6 +219,9 @@ String VERSION = "Version 1.01";
            * increasing temp threshold from 0.05 to 0.20, otherwise the heat starts and stops too soon and often
  * changes in version 1.01:
            * update blynk to new blynk cloud
+ * changes in version 1.02:
+           * send garage open/close via particle publish/subscribe
+           * receive downstairs temp via particle publish/subscribe
 
 
 TODO:
@@ -416,6 +420,8 @@ BlynkTimer timer;
 // this is the remote temperature sensor
 #define BLYNK_DISPLAY_CURRENT_TEMP_UPSTAIRS V9
 
+#define BLYNK_GARAGE_BUTTON V14
+
 // this defines how often the readings are sent to the blynk cloud (millisecs)
 #define BLYNK_STORE_INTERVAL 5000
 elapsedMillis blynkStoreInterval;
@@ -457,13 +463,13 @@ int oledStep = 0;
 // randomly chosen value here. The only thing that matters is that it's not 255
 //  since 255 is the default value for uninitialized eeprom
 //  I used 137 and 138 in version 0.21 already
-#define EEPROM_VERSION 142
+#define EEPROM_VERSION 146
 #define EEPROM_ADDRESS 0
 
 struct EepromMemoryStructure
 {
   uint8_t version = EEPROM_VERSION;
-  uint8_t targetTemp;
+  float targetTemp;
   uint8_t internalFan;
   uint8_t internalMode;
 };
@@ -479,6 +485,14 @@ ApplicationWatchdog wd(120000, System.reset);
 
 #define RESET_IF_NO_WIFI 120000
 elapsedMillis resetIfNoWifiInterval;
+
+int downstairsTemp = 0;
+
+void myHandler(const char *event, const char *data)
+{
+  // convert data into a float
+  downstairsTemp = atoi(data);
+}
 
 /*******************************************************************************
  * Function Name  : setup
@@ -534,7 +548,7 @@ void setup()
 
 #ifdef USE_BLYNK
   Blynk.begin(auth);
-  timer.setInterval(1000L, myTimerEvent);
+  timer.setInterval(1000, myTimerEvent);
 #endif
 
   Time.zone(TIME_ZONE);
@@ -552,6 +566,8 @@ void setup()
 
   // restore settings from eeprom, if there were any saved before
   readFromEeprom();
+
+  Particle.subscribe("DownStairs_Temp", myHandler);
 }
 
 // This wrapper is in charge of calling the DHT sensor lib
@@ -568,8 +584,8 @@ void loop()
   readTemperature();
 
 #ifdef USE_BLYNK
-  // all the Blynk magic happens here
   Blynk.run();
+  timer.run();
 #endif
 
   updateTargetTemp();
@@ -1787,7 +1803,8 @@ void readFromEeprom()
   if (myObj.version == EEPROM_VERSION)
   {
 
-    targetTemp = float(myObj.targetTemp) / 100;
+    targetTemp = myObj.targetTemp;
+    desiredTemp = targetTemp;
     newTargetTemp = targetTemp;
     targetTempString = float2string(targetTemp);
 
@@ -1802,7 +1819,7 @@ void readFromEeprom()
     }
 
     // Particle.publish(APP_NAME, "DEBUG: read settings from EEPROM: " + String(myObj.targetTemp)
-    Particle.publish(APP_NAME, "read:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp) + "-" + String(myObj.targetTemp), 60, PRIVATE);
+    Particle.publish(APP_NAME, "read:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp), 60, PRIVATE);
   }
 }
 
@@ -1841,7 +1858,7 @@ void saveSettings()
 
   // store thresholds in the struct type that will be saved in the eeprom
   eepromMemory.version = EEPROM_VERSION;
-  eepromMemory.targetTemp = targetTemp * 100;
+  eepromMemory.targetTemp = targetTemp;
   eepromMemory.internalMode = convertModeToInt(internalMode);
 
   eepromMemory.internalFan = 0;
@@ -1854,7 +1871,7 @@ void saveSettings()
   EEPROM.put(EEPROM_ADDRESS, eepromMemory);
 
   // Particle.publish(APP_NAME, "stored:" + eepromMemory.internalMode + "-" + String(eepromMemory.internalFan) + "-" + String(eepromMemory.targetTemp) , 60, PRIVATE);
-  Particle.publish(APP_NAME, "stored:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp) + "-" + String(eepromMemory.targetTemp), 60, PRIVATE);
+  Particle.publish(APP_NAME, "stored:" + internalMode + "-" + String(internalFan) + "-" + String(targetTemp), 60, PRIVATE);
 }
 
 /*******************************************************************************
@@ -1936,6 +1953,7 @@ void myTimerEvent()
   Blynk.virtualWrite(BLYNK_DISPLAY_TARGET_TEMP, desiredTemp);
   Blynk.virtualWrite(BLYNK_LED_FAN, externalFan);
   Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
+  Blynk.virtualWrite(V8, downstairsTemp);
 }
 
 // desired temp --
@@ -2038,5 +2056,19 @@ BLYNK_WRITE(BLYNK_BUTTON_MODE)
     Blynk.virtualWrite(BLYNK_DISPLAY_MODE, externalMode);
 
     flagSettingsHaveChanged();
+  }
+}
+
+BLYNK_WRITE(BLYNK_GARAGE_BUTTON)
+{
+  // open the garage only when blynk sends a 1, after the user presses for more than one second
+  // to avoid opening the garage by mistake
+  // background: in a BLYNK push button, blynk sends 0 then 1 when user taps on it
+  // source: http://docs.blynk.cc/#widgets-controllers-button
+
+  // this means the button has been pressed
+  if (param.asInt() == 1)
+  {
+    Particle.publish("Open_My_Garage", "Open_My_Garage", 60, PRIVATE);
   }
 }
