@@ -527,8 +527,11 @@ void loop()
   readTemperature();
 
 #ifdef USE_BLYNK
-  Blynk.run();
-  timer.run();
+  if (Particle.connected())
+  {
+    Blynk.run();
+    timer.run();
+  }
 #endif
 
   updateTargetTemp();

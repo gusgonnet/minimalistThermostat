@@ -486,12 +486,12 @@ ApplicationWatchdog wd(120000, System.reset);
 #define RESET_IF_NO_WIFI 120000
 elapsedMillis resetIfNoWifiInterval;
 
-int downstairsTemp = 0;
+float downstairsTemp = 0;
 
 void myHandler(const char *event, const char *data)
 {
   // convert data into a float
-  downstairsTemp = atoi(data);
+  downstairsTemp = atof(data);
 }
 
 /*******************************************************************************
@@ -584,8 +584,11 @@ void loop()
   readTemperature();
 
 #ifdef USE_BLYNK
-  Blynk.run();
-  timer.run();
+  if (Particle.connected())
+  {
+    Blynk.run();
+    timer.run();
+  }
 #endif
 
   updateTargetTemp();
